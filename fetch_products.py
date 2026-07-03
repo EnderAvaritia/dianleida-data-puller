@@ -18,9 +18,9 @@ OUTPUT_DIR = Path("output")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
-def search_products(keyword, max_pages=1, page_size=30, sort_field="bookedCount7dGrowthRate"):
+def search_products(keyword, max_pages=1, page_size=30, sort_field="bookedCount7dGrowthRate", debug=False):
     """按关键词搜索商品，翻页，导出 JSON+CSV"""
-    client = DianLeidaClient()
+    client = DianLeidaClient(headless=not debug)
     client.start()
     if not client.is_logged_in():
         print("[FAIL] 未登录，请先运行 login.py")
@@ -50,9 +50,9 @@ def search_products(keyword, max_pages=1, page_size=30, sort_field="bookedCount7
     _save_products(name, all_items)
 
 
-def search_shops(province="", city="", max_pages=0, page_size=200):
+def search_shops(province="", city="", max_pages=0, page_size=200, debug=False):
     """拉取商家/供应商列表，支持按地区筛选和多页拉取"""
-    client = DianLeidaClient()
+    client = DianLeidaClient(headless=not debug)
     client.start()
     if not client.is_logged_in():
         print("[FAIL] 未登录")
@@ -132,12 +132,13 @@ if __name__ == "__main__":
     parser.add_argument("--sort", default="bookedCount7dGrowthRate", help="排序字段")
     parser.add_argument("--province", default="", help="省份过滤 (仅 shop 模式)")
     parser.add_argument("--city", default="", help="城市过滤 (仅 shop 模式)")
+    parser.add_argument("--debug", action="store_true", help="打开浏览器窗口 (调试用)")
 
     args = parser.parse_args()
 
     if args.mode == "shop":
         size = args.size if args.size != 30 else 200  # shop 模式默认 200
-        search_shops(province=args.province, city=args.city, max_pages=args.pages, page_size=size)
+        search_shops(province=args.province, city=args.city, max_pages=args.pages, page_size=size, debug=args.debug)
     else:
         kw = args.keyword or input("输入搜索关键词: ")
-        search_products(kw, args.pages, args.size, args.sort)
+        search_products(kw, args.pages, args.size, args.sort, debug=args.debug)

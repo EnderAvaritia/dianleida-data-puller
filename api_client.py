@@ -27,8 +27,9 @@ SORT_OPTIONS = {
 class DianLeidaClient:
     """店雷达 API 客户端 — 页面常驻 + 表单交互"""
 
-    def __init__(self, cookie_path=COOKIE_FILE):
+    def __init__(self, cookie_path=COOKIE_FILE, headless=True):
         self.cookie_path = cookie_path
+        self._headless = headless
         self._pw = None
         self._browser = None
         self._ctx = None
@@ -46,7 +47,7 @@ class DianLeidaClient:
 
     def start(self):
         self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=True)
+        self._browser = self._pw.chromium.launch(headless=self._headless)
         self._ctx = self._browser.new_context(locale="zh-CN")
         with open(self.cookie_path, encoding="utf-8") as f:
             self._ctx.add_cookies(json.load(f))
@@ -279,11 +280,12 @@ class DianLeidaClient:
                     pass
 
             if new_data is None:
+                print(" 无响应", flush=True)
                 break
 
             items = new_data.get("result", {}).get("list", [])
             all_items.extend(items)
-            print(f"  第 {current_page} 页: {len(items)} 条 (累计 {len(all_items)}/{total_count})")
+            print(f" {len(items)} 条 (累计 {len(all_items)}/{total_count})", flush=True)
             if not items or len(items) < page_size:
                 break
 
