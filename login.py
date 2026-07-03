@@ -4,10 +4,15 @@
 后续运行直接加载 cookie，无需重复登录
 """
 
+import io
 import json
 import os
+import re
 import sys
 from pathlib import Path
+
+# 强制 stdout 使用 utf-8，避免 gbk 编码报错
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 from playwright.sync_api import sync_playwright
 
@@ -23,7 +28,7 @@ def load_saved_cookies(context) -> bool:
         with open(COOKIE_FILE, "r", encoding="utf-8") as f:
             cookies = json.load(f)
         context.add_cookies(cookies)
-        print(f"[✓] 已加载 {len(cookies)} 个 cookie")
+        print(f"[[OK]] 已加载 {len(cookies)} 个 cookie")
         return True
     except Exception as e:
         print(f"[!] cookie 加载失败: {e}")
@@ -35,21 +40,24 @@ def save_cookies(context):
     cookies = context.cookies()
     with open(COOKIE_FILE, "w", encoding="utf-8") as f:
         json.dump(cookies, f, ensure_ascii=False, indent=2)
-    print(f"[✓] cookie 已保存 ({len(cookies)} 个) -> {COOKIE_FILE}")
+    print(f"[[OK]] cookie 已保存 ({len(cookies)} 个) -> {COOKIE_FILE}")
 
 
 def is_logged_in(page) -> bool:
     """检测是否已登录（通过页面元素判断）"""
     try:
-        # 登录后页面通常会出现"工作台"或用户头像等元素
-        # 用较短的超时快速检测
-        page.wait_for_selector(
-            'a:has-text("工作台"), .user-avatar, .user-info, [class*="user"]',
-            timeout=5000,
-        )
+        # 登录后页面会出现"工作台"或用户菜单
+        page.wait_for_selector('.user-menu, .user-info, [class*="avatar"], .header-user', timeout=5000)
         return True
     except Exception:
-        return False
+        pass
+    # 另一种检测：URL 是否包含内部路径
+    try:
+        if "/1688/" in page.url or "/buy/" in page.url:
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def do_login(page):
@@ -60,16 +68,16 @@ def do_login(page):
 
     # 点击登录/注册按钮
     try:
-        login_btn = page.locator('a:has-text("登录"), button:has-text("登录"), span:has-text("登录"), text=登录/注册')
+        login_btn = page.get_by_text(re.compile(r"登录", re.IGNORECASE))
         login_btn.first.click(timeout=10000)
         print("[*] 已点击登录按钮，等待登录完成...")
     except Exception as e:
-        print(f"[*] 自动点击登录按钮失败 ({e})，请手动点击")
+        print(f"[*] 自动点击登录按钮失败 ({e})，请手动在浏览器中登录")
 
     # 等待用户完成登录 — 检测到"工作台"或URL变化即认为登录成功
     try:
         page.wait_for_url("**/1688/**", timeout=300000)  # 5分钟超时
-        print("[✓] 检测到 URL 跳转，登录似乎已完成")
+        print("[[OK]] 检测到 URL 跳转，登录似乎已完成")
     except Exception:
         pass
 
@@ -84,7 +92,7 @@ def ensure_logged_in(context, page) -> bool:
         page.goto(BASE_URL, wait_until="domcontentloaded")
         page.wait_for_timeout(3000)
         if is_logged_in(page):
-            print("[✓] Cookie 有效，已登录状态")
+            print("[[OK]] Cookie 有效，已登录状态")
             return True
         else:
             print("[!] Cookie 已过期，需要重新登录")
@@ -95,10 +103,9 @@ def ensure_logged_in(context, page) -> bool:
 
     # 处理地区选择弹窗（如果出现）
     try:
-        region_modal = page.locator('text=请选择地区')
-        if region_modal.is_visible(timeout=3000):
-            # 默认选第一个地区或关闭
-            confirm_btn = page.locator('button:has-text("确定"), .confirm-btn, text=确定')
+        region_text = page.get_by_text("请选择地区")
+        if region_text.is_visible(timeout=3000):
+            confirm_btn = page.get_by_text("确定", exact=True)
             if confirm_btn.is_visible(timeout=2000):
                 confirm_btn.click()
                 page.wait_for_timeout(1000)
@@ -111,7 +118,7 @@ def ensure_logged_in(context, page) -> bool:
         save_cookies(context)
         return True
     else:
-        print("[✗] 登录检测失败，请检查")
+        print("[[FAIL]] 登录检测失败，请检查")
         return False
 
 
@@ -131,15 +138,27 @@ def main():
 
         ok = ensure_logged_in(context, page)
         if ok:
-            print("\n[✓] 登录状态正常，准备就绪")
-            # 打印用户信息页标题以供确认
+            print("\n[OK] 登录状态正常，准备就绪")
             print(f"[*] 当前页面: {page.title()}")
+            # 进入选品库页面，方便后续抓包
+            page.goto("https://www.dianleida.net/1688/competeShop/category/library/", wait_until="domcontentloaded")
+            page.wait_for_timeout(3000)
+            print(f"[*] 已进入选品库: {page.title()}")
         else:
-            print("\n[✗] 登录失败")
+            print("\n[FAIL] 登录失败")
             sys.exit(1)
 
-        input("\n按 Enter 键退出并关闭浏览器...")
-        browser.close()
+        print("\n[指令] 浏览器保持打开，你可以:")
+        print("  1. 打开开发者工具 (F12) -> Network 标签")
+        print("  2. 在页面上操作（搜索商品、查看榜单等）")
+        print("  3. 观察 Network 中的 API 请求")
+        print("  按 Ctrl+C 关闭浏览器退出\n")
+        try:
+            page.wait_for_timeout(999999999)  # 保持打开，等待用户探索
+        except (KeyboardInterrupt, Exception):
+            pass
+        finally:
+            browser.close()
 
 
 if __name__ == "__main__":
