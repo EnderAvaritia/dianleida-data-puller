@@ -237,6 +237,9 @@ class DianLeidaClient:
                     items = data.get("result", {}).get("list", [])
                     all_items.extend(items)
                     total_count = data.get("result", {}).get("totalCount", 0)
+                    loc_str = f"{province} {city}".strip() or "全国"
+                    print(f"\n[商家搜索] 地区={loc_str} 每页{page_size}条")
+                    print(f"  第 1 页: {len(items)} 条 (累计 {len(all_items)}/{total_count})", flush=True)
                     break
             except Exception:
                 pass
@@ -253,6 +256,7 @@ class DianLeidaClient:
                 next_btn = self._page.locator("button.btn-next").first
                 if not next_btn.is_visible(timeout=2000) or next_btn.is_disabled():
                     break
+                print(f"  -> 翻到第 {current_page} 页...", end="", flush=True)
                 next_btn.click(force=True, timeout=5000)
             except Exception:
                 break
@@ -279,10 +283,12 @@ class DianLeidaClient:
 
             items = new_data.get("result", {}).get("list", [])
             all_items.extend(items)
+            print(f"  第 {current_page} 页: {len(items)} 条 (累计 {len(all_items)}/{total_count})")
             if not items or len(items) < page_size:
                 break
 
         self._page.unroute("**/dld/api/shopSearch/queryList")
+        print(f"  [完成] 共 {len(all_items)} 条 (总计 {total_count})", flush=True)
 
         return {
             "code": 200,

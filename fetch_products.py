@@ -30,15 +30,15 @@ def search_products(keyword, max_pages=1, page_size=30, sort_field="bookedCount7
     all_items = []
     name = keyword.replace("*", "").strip() or "products"
 
-    print(f"\n[商品搜索] '{keyword}' 排序={sort_field} 共{max_pages}页")
+    print(f"\n[商品搜索] '{keyword}' 排序={sort_field} 共{max_pages}页", flush=True)
     for pg in range(1, max_pages + 1):
-        print(f"  第 {pg}/{max_pages} 页...")
+        print(f"  第 {pg}/{max_pages} 页...", end="", flush=True)
         try:
             result = client.search_products(keyword=keyword, page=pg, page_size=page_size, sort_field=sort_field)
             items = result.get("result", {}).get("list", [])
             total = result.get("result", {}).get("totalCount", 0)
             all_items.extend(items)
-            print(f"    -> {len(items)} 条 (累计 {len(all_items)}/{total})")
+            print(f" {len(items)} 条 (累计 {len(all_items)}/{total})", flush=True)
             if len(items) < page_size:
                 break
             time.sleep(0.5)
@@ -59,15 +59,9 @@ def search_shops(province="", city="", max_pages=0, page_size=200):
         client.stop()
         return
 
-    loc_str = f"{province} {city}".strip() or "全国"
-    max_str = f" (最多{max_pages}页)" if max_pages else " (全部)"
-    print(f"\n[商家搜索] 地区={loc_str}{max_str} 每页{page_size}条")
-
     try:
         result = client.search_shops(province=province, city=city, page_size=page_size, max_pages=max_pages)
         items = result.get("result", {}).get("list", [])
-        total = result.get("result", {}).get("totalCount", 0)
-        print(f"  -> 获取 {len(items)} 条 (总计 {total})")
     except Exception as e:
         print(f"  [FAIL] {e}")
         items = []
