@@ -1,0 +1,24 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Credentials & cookies
+cookies.json
+*.env
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Project temp
+temp/
+downloads/
