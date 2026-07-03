@@ -167,23 +167,130 @@ class DianLeidaClient:
 
     def search_shops(
         self,
+        province: str = "",
+        city: str = "",
         page_no: int = 1,
-        page_size: int = 20,
+        page_size: int = 200,
         sort_field: str = "bookedCount30d",
+        max_pages: int = 0,
     ) -> dict:
         """
-        搜索商家/供应商（按 30日订单数排序）
+        搜索商家/供应商，支持按地区筛选和多页拉取（通过点击"下一页"分页）
 
-        导航到一手源头工厂页面，自动触发 shopSearch/queryList API 并捕获结果。
-        (地区筛选暂不支持 API 级注入，可在 Python 端按 province/city 字段过滤)
+        通过 route 拦截自动触发的 API 请求并注入 location 参数，实现地区过滤。
+        翻页通过 Vue 分页组件的"下一页"按钮触发，保留页面签名逻辑。
+        使用 page_size=200 减少翻页次数。
+
+        参数:
+            province: 省份 (如 "浙江", "广东", "")
+            city: 城市 (如 "杭州", "广州", 留空=全省)
+            page_no: 起始页码
+            page_size: 每页条数 (最大 200)
+            sort_field: 排序字段
+                bookedCount30d  - 30日订单数 (默认)
+                saleQuantity30d - 30日销量
+                salesVolume30d  - 30日销售额
+            max_pages: 最大页数 (0=所有页)
         """
-        with self._page.expect_response(
-            lambda r: "/dld/api/shopSearch/queryList" in r.url and r.request.method == "POST",
-            timeout=30000,
-        ) as resp_info:
-            self._page.goto(self.FACTORY_URL, wait_until="domcontentloaded", timeout=30000)
-            self._page.wait_for_timeout(8000)
-        return resp_info.value.json()
+        all_items = []
+        total_count = 0
+        api_responses = []
+
+        # Route handler: inject location + pagination into API call
+        def handle_route(route):
+            req = route.request
+            if "/dld/api/shopSearch/queryList" in req.url:
+                body = json.loads(req.post_data or "{}")
+                loc_entry = {"province": province} if province else {}
+                if city:
+                    loc_entry["city"] = city
+                body["query"]["location"] = [loc_entry] if loc_entry else []
+                body["pageSize"] = page_size
+                body["sortField"] = sort_field
+                route.continue_(post_data=json.dumps(body, ensure_ascii=False))
+            else:
+                route.continue_()
+
+        # Response handler: collect API data
+        def on_response(resp):
+            nonlocal total_count
+            if "/dld/api/shopSearch/queryList" in resp.url:
+                try:
+                    api_responses.append(resp)
+                except Exception:
+                    pass
+
+        self._page.on("response", on_response)
+        self._page.route("**/dld/api/shopSearch/queryList", handle_route)
+
+        # Initial load with page_no=1
+        self._page.goto(self.FACTORY_URL, wait_until="domcontentloaded", timeout=30000)
+        self._page.wait_for_timeout(5000)
+        self._close_dialogs()
+        self._page.wait_for_timeout(3000)
+
+        # Collect page 1 data
+        for resp in api_responses[-3:]:
+            try:
+                data = resp.json()
+                if data.get("code") == 200:
+                    items = data.get("result", {}).get("list", [])
+                    all_items.extend(items)
+                    total_count = data.get("result", {}).get("totalCount", 0)
+                    break
+            except Exception:
+                pass
+
+        # Paginate via clicking "下一页"
+        current_page = 1
+        while True:
+            current_page += 1
+            if max_pages > 0 and current_page > max_pages:
+                break
+
+            before = len(api_responses)
+            try:
+                next_btn = self._page.locator("button.btn-next").first
+                if not next_btn.is_visible(timeout=2000) or next_btn.is_disabled():
+                    break
+                next_btn.click(force=True, timeout=5000)
+            except Exception:
+                break
+
+            # Wait for new API response
+            for _ in range(60):
+                self._page.wait_for_timeout(250)
+                if len(api_responses) > before:
+                    break
+
+            # Extract data from the latest response
+            new_data = None
+            for resp in api_responses[before:]:
+                try:
+                    d = resp.json()
+                    if d.get("code") == 200:
+                        new_data = d
+                        break
+                except Exception:
+                    pass
+
+            if new_data is None:
+                break
+
+            items = new_data.get("result", {}).get("list", [])
+            all_items.extend(items)
+            if not items or len(items) < page_size:
+                break
+
+        self._page.unroute("**/dld/api/shopSearch/queryList")
+
+        return {
+            "code": 200,
+            "result": {
+                "totalCount": total_count,
+                "list": all_items,
+            },
+        }
 
     # ── 辅助方法 ──────────────────────────────────────
 

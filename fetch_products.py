@@ -50,8 +50,8 @@ def search_products(keyword, max_pages=1, page_size=30, sort_field="bookedCount7
     _save_products(name, all_items)
 
 
-def search_shops(max_pages=1, page_size=20):
-    """拉取商家/供应商列表，导出 JSON+CSV"""
+def search_shops(province="", city="", max_pages=0, page_size=200):
+    """拉取商家/供应商列表，支持按地区筛选和多页拉取"""
     client = DianLeidaClient()
     client.start()
     if not client.is_logged_in():
@@ -59,25 +59,22 @@ def search_shops(max_pages=1, page_size=20):
         client.stop()
         return
 
-    all_items = []
-    print(f"\n[商家搜索] 共{max_pages}页")
-    for pg in range(1, max_pages + 1):
-        print(f"  第 {pg}/{max_pages} 页...")
-        try:
-            result = client.search_shops(page_no=pg, page_size=page_size)
-            items = result.get("result", {}).get("list", [])
-            total = result.get("result", {}).get("totalCount", 0)
-            all_items.extend(items)
-            print(f"    -> {len(items)} 条 (累计 {len(all_items)}/{total})")
-            if len(items) < page_size:
-                break
-            time.sleep(0.5)
-        except Exception as e:
-            print(f"    [FAIL] {e}")
-            break
+    loc_str = f"{province} {city}".strip() or "全国"
+    max_str = f" (最多{max_pages}页)" if max_pages else " (全部)"
+    print(f"\n[商家搜索] 地区={loc_str}{max_str} 每页{page_size}条")
+
+    try:
+        result = client.search_shops(province=province, city=city, page_size=page_size, max_pages=max_pages)
+        items = result.get("result", {}).get("list", [])
+        total = result.get("result", {}).get("totalCount", 0)
+        print(f"  -> 获取 {len(items)} 条 (总计 {total})")
+    except Exception as e:
+        print(f"  [FAIL] {e}")
+        items = []
 
     client.stop()
-    _save_shops(all_items)
+    name = f"shops_{province}{city}" if province else "shops"
+    _save_shops(items, name)
 
 
 def _save_products(items, name="products"):
@@ -101,14 +98,14 @@ def _save_products(items, name="products"):
     print(f"[OK] CSV: {csv_path}")
 
 
-def _save_shops(items):
+def _save_shops(items, name="shops"):
     """保存商家数据"""
-    json_path = OUTPUT_DIR / "shops.json"
+    json_path = OUTPUT_DIR / f"{name}.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump({"total": len(items), "items": items}, f, ensure_ascii=False, indent=2)
     print(f"\n[OK] JSON: {json_path} ({len(items)} 家)")
 
-    csv_path = OUTPUT_DIR / "shops.csv"
+    csv_path = OUTPUT_DIR / f"{name}.csv"
     fields = ["shopId", "company", "sellerAccount", "province", "city", "address",
               "isFactory", "tpYear", "dayBookedCount", "daySalesVolume",
               "repeatRate", "wwResponseRate", "bookedCount30d", "saleQuantity30d",
@@ -136,14 +133,17 @@ if __name__ == "__main__":
     parser.add_argument("mode", nargs="?", default="product", choices=["product", "shop"],
                         help="product=搜商品  shop=拉商家 (默认 product)")
     parser.add_argument("keyword", nargs="?", default="", help="搜索关键词 (仅 product 模式)")
-    parser.add_argument("--pages", type=int, default=1, help="拉取页数")
-    parser.add_argument("--size", type=int, default=30, help="每页条数")
+    parser.add_argument("--pages", type=int, default=1, help="拉取页数 (0=全部)")
+    parser.add_argument("--size", type=int, default=30, help="每页条数 (商家模式默认200)")
     parser.add_argument("--sort", default="bookedCount7dGrowthRate", help="排序字段")
+    parser.add_argument("--province", default="", help="省份过滤 (仅 shop 模式)")
+    parser.add_argument("--city", default="", help="城市过滤 (仅 shop 模式)")
 
     args = parser.parse_args()
 
     if args.mode == "shop":
-        search_shops(max_pages=args.pages, page_size=args.size)
+        size = args.size if args.size != 30 else 200  # shop 模式默认 200
+        search_shops(province=args.province, city=args.city, max_pages=args.pages, page_size=size)
     else:
         kw = args.keyword or input("输入搜索关键词: ")
         search_products(kw, args.pages, args.size, args.sort)

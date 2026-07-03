@@ -48,11 +48,32 @@ venv\Scripts\python.exe fetch_products.py product "关键词" [选项]
 
 ### 商家/供应商拉取
 
+支持按**省份/城市**筛选，自动翻页拉取所有数据。
+
 ```bash
+# 拉取全国商家
 venv\Scripts\python.exe fetch_products.py shop --pages 5
+
+# 拉取浙江省所有商家
+venv\Scripts\python.exe fetch_products.py shop --province 浙江 --pages 0
+
+# 拉取杭州市商家
+venv\Scripts\python.exe fetch_products.py shop --province 浙江 --city 杭州 --pages 0
 ```
 
-按 30日订单数排序拉取一手源头工厂/供应商数据，导出 JSON + CSV，含省份分布统计。
+选项:
+- `--province` — 省份过滤 (如 "浙江", "广东")
+- `--city` — 城市过滤 (如 "杭州", "广州", 需配合 --province)
+- `--pages N` — 拉取 N 页; **`--pages 0` = 所有页**
+- `--size N` — 每页 N 条 (默认 200, 最大 200, 越大翻页越少)
+- `--sort FIELD` — 排序字段
+
+商家排序字段:
+| 参数 | 说明 |
+|------|------|
+| `bookedCount30d` | 30日订单数 (默认) |
+| `saleQuantity30d` | 30日销量 |
+| `salesVolume30d` | 30日销售额 |
 
 每条商家包含: 公司名、所在地(省/市)、诚信通年限、30日订单/销量/销售额、复购率、响应率等。
 
