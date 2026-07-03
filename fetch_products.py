@@ -30,7 +30,7 @@ def search_to_file(
     参数:
         keyword: 搜索关键词
         max_pages: 最多拉取多少页
-        page_size: 每页条数 (最大50)
+        page_size: 每页条数 (最大200)
         sort_field: 排序字段
         output_name: 输出文件名 (不含扩展名)
     """
