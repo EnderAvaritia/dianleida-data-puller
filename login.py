@@ -44,24 +44,27 @@ def save_cookies(context):
 
 
 def is_logged_in(page) -> bool:
-    """检测是否已登录（通过页面元素判断）"""
+    """检测是否已登录"""
     try:
-        # 登录后页面会出现"工作台"或用户菜单
-        page.wait_for_selector('.user-menu, .user-info, [class*="avatar"], .header-user', timeout=5000)
-        return True
+        body = page.text_content("body") or ""
+        # 登录后的页面特征
+        keywords = ["工作台", "退出", "我的关注", "选品库", "logout", "dashboard"]
+        for kw in keywords:
+            if kw.lower() in body.lower():
+                return True
     except Exception:
         pass
-    # 另一种检测：URL 是否包含内部路径
     try:
-        if "/1688/" in page.url or "/buy/" in page.url:
+        url = page.url
+        if "/1688/" in url or "/buy/" in url:
             return True
     except Exception:
         pass
     return False
 
 
-def do_login(page):
-    """执行登录操作：点击登录按钮，等待用户手动完成"""
+def do_login(page, context):
+    """执行登录操作：点击登录按钮，等待用户手动完成，检测到登录后自动保存 cookie"""
     print("\n[!] 需要登录店雷达")
     print("[!] 浏览器已打开，请手动扫码或账号密码登录")
     print("[!] 登录完成后，脚本会自动检测并保存 cookie\n")
@@ -74,15 +77,30 @@ def do_login(page):
     except Exception as e:
         print(f"[*] 自动点击登录按钮失败 ({e})，请手动在浏览器中登录")
 
-    # 等待用户完成登录 — 检测到"工作台"或URL变化即认为登录成功
-    try:
-        page.wait_for_url("**/1688/**", timeout=300000)  # 5分钟超时
-        print("[[OK]] 检测到 URL 跳转，登录似乎已完成")
-    except Exception:
-        pass
+    # 轮询检测登录成功（URL 变化或页面出现登录态元素）
+    for i in range(120):  # 最多等 120 秒
+        page.wait_for_timeout(1000)
+        try:
+            url = page.url
+            # 检测 URL 是否包含内部路径
+            if "/1688/" in url or "/buy/" in url or "/competeShop/" in url:
+                print(f"\n[[OK]] 检测到 URL 跳转: {url}")
+                save_cookies(context)
+                return True
+            # 检测页面元素
+            body_text = page.text_content("body") or ""
+            if "工作台" in body_text or "退出" in body_text:
+                print(f"\n[[OK]] 检测到登录态文本")
+                save_cookies(context)
+                return True
+        except Exception:
+            pass
+        if i % 10 == 0 and i > 0:
+            print(f"  等待中... ({i}s)")
 
-    # 额外等待确保页面完全加载
-    page.wait_for_timeout(3000)
+    print("\n[!] 登录检测超时，尝试保存当前 cookies")
+    save_cookies(context)  # 超时也保存
+    return False
 
 
 def ensure_logged_in(context, page) -> bool:
@@ -112,12 +130,19 @@ def ensure_logged_in(context, page) -> bool:
     except Exception:
         pass
 
-    do_login(page)
+    do_login(page, context)
 
+    # 最后再检查一次
+    page.goto(BASE_URL, wait_until="domcontentloaded")
+    page.wait_for_timeout(3000)
     if is_logged_in(page):
         save_cookies(context)
         return True
     else:
+        # cookies 可能已经由 do_login 保存了
+        if COOKIE_FILE.exists():
+            print("[OK] cookies.json 已存在，尝试继续")
+            return True
         print("[[FAIL]] 登录检测失败，请检查")
         return False
 
