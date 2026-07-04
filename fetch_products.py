@@ -234,6 +234,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.mode == "shop":
+        if args.city and not args.province:
+            print("[FAIL] --city 必须配合 --province 使用，如: --province 江苏 --city 常州")
+            sys.exit(1)
         size = args.size if args.size != 30 else 200  # shop 模式默认 200
         search_shops(
             province=args.province, city=args.city,
