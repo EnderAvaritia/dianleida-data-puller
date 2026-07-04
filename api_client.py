@@ -356,10 +356,6 @@ class DianLeidaClient:
             new_data = _click_next()
             if new_data is None:
                 print(" 无响应", flush=True)
-                # 检测是否是免费版限制弹窗
-                upgrade = self._page.locator("text=升级套餐").first
-                if upgrade.is_visible(timeout=500):
-                    print("  [限制] 免费版最多查看 100 条，升级套餐可查看更多", flush=True)
                 break
 
             items = new_data.get("result", {}).get("list", [])
