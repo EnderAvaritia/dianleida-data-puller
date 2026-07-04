@@ -63,8 +63,8 @@ venv\Scripts\python.exe fetch_products.py shop --province 浙江 --city 杭州 -
 ```
 
 选项:
-- `--province` — 省份过滤 (如 "浙江", "广东")
-- `--city` — 城市过滤 (如 "杭州", "广州", 需配合 `--province`)
+- `--province` — 省份过滤 (如 "浙江", "广东")。使用 `--city` 时必须指定
+- `--city` — 城市过滤 (如 "杭州", "常州")，必须配合 `--province`
 - `--pages N` — 拉取 N 页; **`--pages 0` = 所有页**
 - `--size N` — 每页 N 条 (默认 200, 最大 200, 越大翻页越少)
 - `--sort FIELD` — 排序字段
