@@ -8,6 +8,7 @@ import io
 import json
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -17,6 +18,46 @@ from api_client import DianLeidaClient
 OUTPUT_DIR = Path("output")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+
+# ── 断点续传 ─────────────────────────────────────
+
+def _checkpoint_path(province="", city=""):
+    name = f"shops_{province}{city}" if province else "shops"
+    return OUTPUT_DIR / f".{name}.checkpoint"
+
+
+def _save_checkpoint(province, city, page, total_items, total_count):
+    """保存断点，用于失败后恢复"""
+    data = {
+        "mode": "shop",
+        "province": province,
+        "city": city,
+        "last_page": page,
+        "total_items": total_items,
+        "total_count": total_count,
+        "timestamp": datetime.now().isoformat(),
+    }
+    path = _checkpoint_path(province, city)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _load_checkpoint(province="", city=""):
+    """读取断点，不存在返回 None"""
+    path = _checkpoint_path(province, city)
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
+def _clear_checkpoint(province="", city=""):
+    path = _checkpoint_path(province, city)
+    if path.exists():
+        path.unlink()
+
+
+# ── 商品搜索 ─────────────────────────────────────
 
 def search_products(keyword, max_pages=1, page_size=30, sort_field="bookedCount7dGrowthRate", debug=False):
     """按关键词搜索商品，翻页，导出 JSON+CSV"""
@@ -43,15 +84,47 @@ def search_products(keyword, max_pages=1, page_size=30, sort_field="bookedCount7
                 break
             time.sleep(0.5)
         except Exception as e:
-            print(f"    [FAIL] {e}")
+            print(f"  [FAIL] {e}")
             break
 
     client.stop()
     _save_products(name, all_items)
 
 
-def search_shops(province="", city="", max_pages=0, page_size=200, debug=False):
-    """拉取商家/供应商列表，支持按地区筛选和多页拉取"""
+# ── 商家搜索 ─────────────────────────────────────
+
+def search_shops(province="", city="", max_pages=0, page_size=200,
+                 from_page=1, resume=False, debug=False):
+    """
+    拉取商家/供应商列表，支持按地区筛选和多页拉取
+
+    支持断点续传: 每翻一页自动保存 checkpoint; --resume 从上次中断处继续。
+    """
+    # ── 断点续传 ──
+    if resume:
+        cp = _load_checkpoint(province, city)
+        if cp:
+            province = cp.get("province", province)
+            city = cp.get("city", city)
+            from_page = cp["last_page"] + 1
+            print(f"[断点续传] 从第 {cp['last_page']} 页继续 (已有 {cp['total_items']} 条)")
+            # 加载已有数据
+            name = f"shops_{province}{city}" if province else "shops"
+            json_path = OUTPUT_DIR / f"{name}.json"
+            if json_path.exists():
+                with open(json_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+                existing_items = existing.get("items", [])
+                print(f"  已加载 {len(existing_items)} 条已有数据")
+            else:
+                existing_items = []
+        else:
+            print("[WARN] 未找到断点，从头开始")
+            from_page = 1
+            existing_items = []
+    else:
+        existing_items = []
+
     client = DianLeidaClient(headless=not debug)
     client.start()
     if not client.is_logged_in():
@@ -59,17 +132,37 @@ def search_shops(province="", city="", max_pages=0, page_size=200, debug=False):
         client.stop()
         return
 
+    all_items = list(existing_items)
+
+    # on_page callback: 每页回调 → 保存 checkpoint
+    def on_page(page_no, items, total_accumulated, total_count):
+        _save_checkpoint(province, city, page_no, total_accumulated, total_count)
+        return True  # 继续拉取
+
     try:
-        result = client.search_shops(province=province, city=city, page_size=page_size, max_pages=max_pages)
-        items = result.get("result", {}).get("list", [])
+        result = client.search_shops(
+            province=province, city=city,
+            from_page=from_page, page_size=page_size,
+            max_pages=max_pages, on_page=on_page,
+        )
+        new_items = result.get("result", {}).get("list", [])
+        # 合并已有数据和新拉取的数据（无重叠，from_page=last_page+1）
+        all_items.extend(new_items)
     except Exception as e:
         print(f"  [FAIL] {e}")
-        items = []
 
     client.stop()
-    name = f"shops_{province}{city}" if province else "shops"
-    _save_shops(items, name)
 
+    # 保存
+    name = f"shops_{province}{city}" if province else "shops"
+    _save_shops(all_items, name)
+
+    # 清除 checkpoint (成功拉取完毕)
+    if all_items:
+        _clear_checkpoint(province, city)
+
+
+# ── 保存函数 ─────────────────────────────────────
 
 def _save_products(items, name="products"):
     """保存商品数据"""
@@ -122,6 +215,8 @@ def _save_shops(items, name="shops"):
         print(f"  {prov}: {cnt} 家")
 
 
+# ── CLI ──────────────────────────────────────────
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="店雷达数据拉取工具")
     parser.add_argument("mode", nargs="?", default="product", choices=["product", "shop"],
@@ -132,13 +227,21 @@ if __name__ == "__main__":
     parser.add_argument("--sort", default="bookedCount7dGrowthRate", help="排序字段")
     parser.add_argument("--province", default="", help="省份过滤 (仅 shop 模式)")
     parser.add_argument("--city", default="", help="城市过滤 (仅 shop 模式)")
+    parser.add_argument("--from-page", type=int, default=1, help="起始页码 (用于跳过已拉取的页)")
+    parser.add_argument("--resume", action="store_true", help="断点续传，从上次中断处继续")
     parser.add_argument("--debug", action="store_true", help="打开浏览器窗口 (调试用)")
 
     args = parser.parse_args()
 
     if args.mode == "shop":
         size = args.size if args.size != 30 else 200  # shop 模式默认 200
-        search_shops(province=args.province, city=args.city, max_pages=args.pages, page_size=size, debug=args.debug)
+        search_shops(
+            province=args.province, city=args.city,
+            max_pages=args.pages, page_size=size,
+            from_page=args.from_page,
+            resume=args.resume,
+            debug=args.debug,
+        )
     else:
         kw = args.keyword or input("输入搜索关键词: ")
         search_products(kw, args.pages, args.size, args.sort, debug=args.debug)

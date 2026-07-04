@@ -170,34 +170,32 @@ class DianLeidaClient:
         self,
         province: str = "",
         city: str = "",
-        page_no: int = 1,
+        from_page: int = 1,
         page_size: int = 200,
         sort_field: str = "bookedCount30d",
         max_pages: int = 0,
+        on_page=None,
     ) -> dict:
         """
         搜索商家/供应商，支持按地区筛选和多页拉取（通过点击"下一页"分页）
 
         通过 route 拦截自动触发的 API 请求并注入 location 参数，实现地区过滤。
         翻页通过 Vue 分页组件的"下一页"按钮触发，保留页面签名逻辑。
-        使用 page_size=200 减少翻页次数。
 
         参数:
             province: 省份 (如 "浙江", "广东", "")
             city: 城市 (如 "杭州", "广州", 留空=全省)
-            page_no: 起始页码
+            from_page: 起始页码 (用于断点续传)
             page_size: 每页条数 (最大 200)
             sort_field: 排序字段
-                bookedCount30d  - 30日订单数 (默认)
-                saleQuantity30d - 30日销量
-                salesVolume30d  - 30日销售额
             max_pages: 最大页数 (0=所有页)
+            on_page: 每页回调 fn(page_no, items, total_accumulated, total_count) -> bool(是否继续)
         """
         all_items = []
         total_count = 0
         api_responses = []
 
-        # Route handler: inject location + pagination into API call
+        # Route handler: inject location into API call
         def handle_route(route):
             req = route.request
             if "/dld/api/shopSearch/queryList" in req.url:
@@ -224,69 +222,103 @@ class DianLeidaClient:
         self._page.on("response", on_response)
         self._page.route("**/dld/api/shopSearch/queryList", handle_route)
 
-        # Initial load with page_no=1
+        # Initial load (always page 1 from server)
         self._page.goto(self.FACTORY_URL, wait_until="domcontentloaded", timeout=30000)
         self._page.wait_for_timeout(5000)
         self._close_dialogs()
         self._page.wait_for_timeout(3000)
 
-        # Collect page 1 data
+        # Helper: wait for and extract a new API response
+        def _wait_response(before_count, timeout=15):
+            for _ in range(timeout * 4):
+                self._page.wait_for_timeout(250)
+                if len(api_responses) > before_count:
+                    break
+            for resp in api_responses[before_count:]:
+                try:
+                    d = resp.json()
+                    if d.get("code") == 200:
+                        return d
+                except Exception:
+                    pass
+            return None
+
+        # Helper: click next page silently, return response data or None
+        def _click_next():
+            before = len(api_responses)
+            try:
+                btn = self._page.locator("button.btn-next").first
+                if not btn.is_visible(timeout=2000) or btn.is_disabled():
+                    return None
+                btn.click(force=True, timeout=5000)
+                return _wait_response(before)
+            except Exception:
+                return None
+
+        # ── Skip pages until from_page ──
+        # Page 1 is already loaded above. Skip to from_page if needed.
+        collected_page_1 = False
+        current_page = 1
+
+        if from_page > 1:
+            print(f"  -> 跳过前 {from_page - 1} 页到第 {from_page} 页...", flush=True)
+            while current_page < from_page:
+                current_page += 1
+                data = _click_next()
+                if data is None:
+                    break
+                # Page 1 already captured; now we have page 2, 3, ..., from_page
+            if current_page < from_page:
+                print(f"  [FAIL] 只能翻到第 {current_page} 页", flush=True)
+                return {"code": -1, "result": {"totalCount": 0, "list": []}}
+            # Now we're at from_page. Collect this page's data and any additional pages.
+            # We need to get the current page data. It was already fetched.
+            # The last API response is the current page. Let me re-read it.
+            pass
+
+        # ── Collect data from current page onward ──
+        # First, extract page 1 (or the from_page we just skipped to) data
         for resp in api_responses[-3:]:
             try:
                 data = resp.json()
                 if data.get("code") == 200:
                     items = data.get("result", {}).get("list", [])
-                    all_items.extend(items)
                     total_count = data.get("result", {}).get("totalCount", 0)
-                    loc_str = f"{province} {city}".strip() or "全国"
-                    print(f"\n[商家搜索] 地区={loc_str} 每页{page_size}条")
-                    print(f"  第 1 页: {len(items)} 条 (累计 {len(all_items)}/{total_count})", flush=True)
+                    if current_page >= from_page:
+                        all_items.extend(items)
+                        if from_page > 1:
+                            print(f"\n[商家搜索] 地区={province} {city} 每页{page_size}条")
+                        print(f"  第 {current_page} 页: {len(items)} 条 (累计 {len(all_items)}/{total_count})", flush=True)
+                        if on_page and not on_page(current_page, items, len(all_items), total_count):
+                            break
                     break
             except Exception:
                 pass
 
-        # Paginate via clicking "下一页"
-        current_page = 1
+        # ── Paginate via clicking "下一页" ──
         while True:
             current_page += 1
             if max_pages > 0 and current_page > max_pages:
                 break
 
-            before = len(api_responses)
-            try:
-                next_btn = self._page.locator("button.btn-next").first
-                if not next_btn.is_visible(timeout=2000) or next_btn.is_disabled():
-                    break
-                print(f"  -> 翻到第 {current_page} 页...", end="", flush=True)
-                next_btn.click(force=True, timeout=5000)
-            except Exception:
-                break
-
-            # Wait for new API response
-            for _ in range(60):
-                self._page.wait_for_timeout(250)
-                if len(api_responses) > before:
-                    break
-
-            # Extract data from the latest response
-            new_data = None
-            for resp in api_responses[before:]:
-                try:
-                    d = resp.json()
-                    if d.get("code") == 200:
-                        new_data = d
-                        break
-                except Exception:
-                    pass
-
+            print(f"  -> 翻到第 {current_page} 页...", end="", flush=True)
+            new_data = _click_next()
             if new_data is None:
                 print(" 无响应", flush=True)
                 break
 
             items = new_data.get("result", {}).get("list", [])
+            if not items:
+                print(" 无数据", flush=True)
+                break
+
             all_items.extend(items)
             print(f" {len(items)} 条 (累计 {len(all_items)}/{total_count})", flush=True)
-            if not items or len(items) < page_size:
+
+            if on_page and not on_page(current_page, items, len(all_items), total_count):
+                break
+
+            if len(items) < page_size:
                 break
 
         self._page.unroute("**/dld/api/shopSearch/queryList")
