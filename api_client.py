@@ -386,28 +386,8 @@ class DianLeidaClient:
     # ── 辅助方法 ──────────────────────────────────────
 
     def _close_dialogs(self):
-        """快速移除所有弹窗遮罩"""
-        # 检测免费版升级弹窗（包含"升级套餐"文本）
-        try:
-            upgrade_popup = self._page.locator("text=升级套餐").first
-            if upgrade_popup.is_visible(timeout=100):
-                # 先找关闭按钮
-                close_btn = self._page.locator(".pop .close-btn, .el-dialog__headerbtn, .el-icon-close").first
-                if close_btn.is_visible(timeout=200):
-                    close_btn.click(force=True, timeout=500)
-                    self._page.wait_for_timeout(300)
-        except:
-            pass
-        # 先尝试点击标准 Element UI 弹窗关闭按钮（安全，无副作用）
-        for sel in [".el-dialog__headerbtn", ".el-message-box__headerbtn"]:
-            try:
-                btn = self._page.locator(sel).first
-                if btn.is_visible(timeout=200):
-                    btn.click(force=True, timeout=500)
-                    self._page.wait_for_timeout(200)
-            except:
-                pass
-        # 移除残留元素，恢复滚动（直接用 JS 移除，不点击弹窗内部按钮以免触发意外操作）
+        """快速移除所有弹窗遮罩 - 只用 JS 移除，不点击 UI 元素"""
+        # 移除残留元素，恢复滚动（直接用 JS 移除，不点击任何按钮以免触发意外操作）
         self._page.evaluate("""() => {
             document.body.style.overflow = 'auto';
             document.documentElement.style.overflow = 'auto';
