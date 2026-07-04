@@ -25,3 +25,5 @@ downloads/
 output/
 *.har
 _checkpoint*
+
+output.zip
