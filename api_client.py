@@ -358,13 +358,6 @@ class DianLeidaClient:
             selectors.forEach(s => {
                 try { document.querySelectorAll(s).forEach(el => el.remove()); } catch(e) {}
             });
-            // 快速移除高 z-index fixed 层（只查 body 子级）
-            try {
-                document.body.querySelectorAll(':scope > div').forEach(el => {
-                    const z = parseInt(el.style.zIndex);
-                    if (z > 1000) el.remove();
-                });
-            } catch(e) {}
         }""")
 
     def is_logged_in(self) -> bool:
