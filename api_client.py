@@ -304,7 +304,7 @@ class DianLeidaClient:
             if max_pages > 0 and current_page > max_pages:
                 break
 
-            print(f"  -> 翻到第 {current_page} 页...", end="", flush=True)
+            print(f"  -> 第 {current_page} 页...", end="", flush=True)
             new_data = _click_next()
             if new_data is None:
                 print(" 无响应", flush=True)
