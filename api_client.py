@@ -338,33 +338,33 @@ class DianLeidaClient:
     # ── 辅助方法 ──────────────────────────────────────
 
     def _close_dialogs(self):
-        """移除所有弹窗遮罩"""
-        # 方法1: 点击已知文字按钮
-        for text in ["暂不登录", "知道了", "取消", "确定"]:
+        """快速移除所有弹窗遮罩"""
+        # 先点关闭按钮（触发 Vue 状态清理）
+        for sel in [".pop .close-btn", ".el-dialog__headerbtn", ".el-message-box__headerbtn"]:
             try:
-                btn = self._page.locator(f"button:has-text('{text}')").first
-                if btn.is_visible(timeout=500):
-                    btn.click()
-                    self._page.wait_for_timeout(300)
+                btn = self._page.locator(sel).first
+                if btn.is_visible(timeout=200):
+                    btn.click(force=True, timeout=500)
+                    self._page.wait_for_timeout(200)
             except:
                 pass
-        # 方法2: 移除所有弹窗/蒙层元素
+        # 再移除残留元素
         self._page.evaluate("""() => {
             const selectors = [
-                '.el-dialog__wrapper', '.v-modal', '.el-overlay',
+                '.pop', '.el-dialog__wrapper', '.v-modal', '.el-overlay',
                 '.el-message-box__wrapper', '.el-dialog', '.el-message',
-                '.el-notification', '.pop', '.mask', '[class*="mask"]',
+                '.el-notification', '.mask',
             ];
             selectors.forEach(s => {
-                document.querySelectorAll(s).forEach(el => el.remove());
+                try { document.querySelectorAll(s).forEach(el => el.remove()); } catch(e) {}
             });
-            // 移除所有具有 fixed/absolute 定位的蒙层
-            document.querySelectorAll('div').forEach(el => {
-                const z = parseInt(el.style.zIndex);
-                if (z > 1000 || el.classList.contains('v-modal') || el.classList.contains('el-overlay')) {
-                    el.remove();
-                }
-            });
+            // 快速移除高 z-index fixed 层（只查 body 子级）
+            try {
+                document.body.querySelectorAll(':scope > div').forEach(el => {
+                    const z = parseInt(el.style.zIndex);
+                    if (z > 1000) el.remove();
+                });
+            } catch(e) {}
         }""")
 
     def is_logged_in(self) -> bool:
