@@ -400,8 +400,13 @@ class DianLeidaClient:
         self._page.evaluate("""() => {
             document.body.style.overflow = 'auto';
             document.documentElement.style.overflow = 'auto';
+            // 只移除 data-v 属性的弹窗元素（精确匹配，不误伤页面内容）
+            document.querySelectorAll('div[class="pop"]').forEach(el => {
+                if (el.hasAttribute('data-v-')) el.remove();
+            });
+            // 标准 Element UI 弹窗
             const selectors = [
-                '.pop', '.el-dialog__wrapper', '.v-modal', '.el-overlay',
+                '.el-dialog__wrapper', '.v-modal', '.el-overlay',
                 '.el-message-box__wrapper', '.el-dialog', '.el-message',
                 '.el-notification', '.mask',
             ];
