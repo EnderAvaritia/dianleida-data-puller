@@ -223,11 +223,48 @@ class DianLeidaClient:
         self._page.on("response", on_response)
         self._page.route("**/dld/api/shopSearch/queryList", handle_route)
 
-        # Initial load (always page 1 from server)
+        # Navigate and wait for the first API response
         self._page.goto(self.FACTORY_URL, wait_until="domcontentloaded", timeout=30000)
-        self._page.wait_for_timeout(5000)
+        try:
+            with self._page.expect_response(
+                lambda r: "/dld/api/shopSearch/queryList" in r.url and r.request.method == "POST",
+                timeout=20000,
+            ) as resp_info:
+                # Wait for response while dialogs are handled
+                pass
+            resp = resp_info.value
+            try:
+                d = resp.json()
+                if isinstance(d, dict) and d.get("code") == 200:
+                    api_responses.append(resp)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Close dialogs now
         self._close_dialogs()
-        self._page.wait_for_timeout(3000)
+        self._page.wait_for_timeout(2000)
+
+        # Check if we got page 1 data; if not, reload
+        got_data = False
+        for resp in list(api_responses):
+            try:
+                d = resp.json()
+                if isinstance(d, dict) and d.get("code") == 200:
+                    got_data = True
+                    break
+            except Exception:
+                pass
+
+        if not got_data:
+            print("  [!] 首次加载未获取到数据，重新加载...", flush=True)
+            self._close_dialogs()
+            self._page.wait_for_timeout(1000)
+            self._page.goto(self.FACTORY_URL, wait_until="domcontentloaded", timeout=30000)
+            self._page.wait_for_timeout(5000)
+            self._close_dialogs()
+            self._page.wait_for_timeout(3000)
 
         # Helper: wait for and extract a new API response
         def _wait_response(before_count, timeout=15):
