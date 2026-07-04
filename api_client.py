@@ -400,9 +400,11 @@ class DianLeidaClient:
         self._page.evaluate("""() => {
             document.body.style.overflow = 'auto';
             document.documentElement.style.overflow = 'auto';
-            // 只移除 data-v 属性的弹窗元素（精确匹配，不误伤页面内容）
+            // 只移除带 Vue scoped data-v-* 属性的 .pop 弹窗（精确匹配，不误伤页面内容）
             document.querySelectorAll('div[class="pop"]').forEach(el => {
-                if (el.hasAttribute('data-v-')) el.remove();
+                for (let attr of el.getAttributeNames()) {
+                    if (attr.startsWith('data-v-')) { el.remove(); break; }
+                }
             });
             // 标准 Element UI 弹窗
             const selectors = [
