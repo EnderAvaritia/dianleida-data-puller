@@ -64,43 +64,65 @@ def is_logged_in(page) -> bool:
 
 
 def do_login(page, context):
-    """执行登录操作：点击登录按钮，等待用户手动完成，检测到登录后自动保存 cookie"""
+    """执行登录操作：点击登录按钮，等待用户手动完成，登录后按回车保存 cookie"""
+    import threading
+    import msvcrt
+
     print("\n[!] 需要登录店雷达")
-    print("[!] 浏览器已打开，请手动扫码或账号密码登录")
-    print("[!] 登录完成后，脚本会自动检测并保存 cookie\n")
+    print("[!] 浏览器已打开")
+    print("[!] 按 Enter 开始登录（自动点击登录按钮）")
+    print("[!] 登录完成后，再次回到此窗口按 Enter 保存 cookie\n")
+
+    # 等待用户按 Enter 开始登录
+    print("[*] 按 Enter 开始登录流程...", end="", flush=True)
+    while True:
+        if msvcrt.kbhit() and msvcrt.getch() in (b'\r', b'\n'):
+            break
+    print("")
 
     # 点击登录/注册按钮
     try:
         login_btn = page.get_by_text(re.compile(r"登录", re.IGNORECASE))
         login_btn.first.click(timeout=10000)
-        print("[*] 已点击登录按钮，等待登录完成...")
+        print("[*] 已点击登录按钮，请在浏览器中扫码或输入账号密码")
     except Exception as e:
         print(f"[*] 自动点击登录按钮失败 ({e})，请手动在浏览器中登录")
 
-    # 轮询检测登录成功（URL 变化或页面出现登录态元素）
-    for i in range(120):  # 最多等 120 秒
+    print("[*] 登录完成后，回到此窗口按 Enter 保存 cookie...")
+
+    # 同时等待：用户按回车 + 自动检测
+    login_done = [False]
+
+    def wait_enter():
+        while not login_done[0]:
+            if msvcrt.kbhit() and msvcrt.getch() in (b'\r', b'\n'):
+                login_done[0] = True
+                break
+
+    t = threading.Thread(target=wait_enter, daemon=True)
+    t.start()
+
+    for i in range(120):
+        if login_done[0]:
+            print("\n[[OK]] 用户按回车，保存 cookie")
+            break
         page.wait_for_timeout(1000)
         try:
             url = page.url
-            # 检测 URL 是否包含内部路径
             if "/1688/" in url or "/buy/" in url or "/competeShop/" in url:
-                print(f"\n[[OK]] 检测到 URL 跳转: {url}")
-                save_cookies(context)
-                return True
-            # 检测页面元素
+                print(f"\n[[OK]] 自动检测到登录: {url}")
+                break
             body_text = page.text_content("body") or ""
             if "工作台" in body_text or "退出" in body_text:
-                print(f"\n[[OK]] 检测到登录态文本")
-                save_cookies(context)
-                return True
+                print(f"\n[[OK]] 自动检测到登录态")
+                break
         except Exception:
             pass
         if i % 10 == 0 and i > 0:
-            print(f"  等待中... ({i}s)")
+            print(f"  等待中... ({i}s) 或在浏览器登录后按 Enter")
 
-    print("\n[!] 登录检测超时，尝试保存当前 cookies")
-    save_cookies(context)  # 超时也保存
-    return False
+    save_cookies(context)
+    return True
 
 
 def ensure_logged_in(context, page) -> bool:
