@@ -87,6 +87,10 @@ def search_products(keyword, max_pages=1, page_size=30, sort_field="bookedCount7
             print(f"  [FAIL] {e}")
             break
 
+    if debug:
+        print("\n[调试] 浏览器保持打开，检查完毕后按 Enter 关闭...")
+        input()
+
     client.stop()
     _save_products(name, all_items)
 
@@ -150,6 +154,10 @@ def search_shops(province="", city="", max_pages=0, page_size=100,
         all_items.extend(new_items)
     except Exception as e:
         print(f"  [FAIL] {e}")
+
+    if debug:
+        print("\n[调试] 浏览器保持打开，检查完毕后按 Enter 关闭...")
+        input()
 
     client.stop()
 
