@@ -195,7 +195,7 @@ class DianLeidaClient:
         total_count = 0
         api_responses = []
 
-        # Route handler: inject location into API call
+        # Route handler: inject location into API call (不覆盖 pageSize, 保持页面原有值)
         def handle_route(route):
             req = route.request
             if "/dld/api/shopSearch/queryList" in req.url:
@@ -205,7 +205,6 @@ class DianLeidaClient:
                 if city:
                     loc_entry["city"] = [city]
                 body["query"]["location"] = [loc_entry] if loc_entry else []
-                body["pageSize"] = page_size
                 body["sortField"] = sort_field
                 route.continue_(post_data=json.dumps(body, ensure_ascii=False))
             else:
