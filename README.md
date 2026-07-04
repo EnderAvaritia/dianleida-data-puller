@@ -58,13 +58,13 @@ venv\Scripts\python.exe fetch_products.py shop --pages 5
 # 拉取浙江省所有商家
 venv\Scripts\python.exe fetch_products.py shop --province 浙江 --pages 0
 
-# 拉取杭州市商家（API 不支持市级过滤，拉取全省后按 city 字段后过滤）
+# 拉取杭州市商家
 venv\Scripts\python.exe fetch_products.py shop --province 浙江 --city 杭州 --pages 0
 ```
 
 选项:
 - `--province` — 省份过滤 (如 "浙江", "广东")
-- `--city` — 城市过滤 (如 "杭州", "广州", 需配合 `--province`)。**注意**：API 不支持市级过滤，拉完全省后由 Python 端按 `city` 字段后过滤
+- `--city` — 城市过滤 (如 "杭州", "广州", 需配合 `--province`)
 - `--pages N` — 拉取 N 页; **`--pages 0` = 所有页**
 - `--size N` — 每页 N 条 (默认 200, 最大 200, 越大翻页越少)
 - `--sort FIELD` — 排序字段

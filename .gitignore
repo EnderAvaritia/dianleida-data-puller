@@ -23,3 +23,5 @@ Thumbs.db
 temp/
 downloads/
 output/
+*.har
+_checkpoint*

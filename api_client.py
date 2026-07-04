@@ -200,10 +200,10 @@ class DianLeidaClient:
             req = route.request
             if "/dld/api/shopSearch/queryList" in req.url:
                 body = json.loads(req.post_data or "{}")
-                # 构造 location 参数（API 只支持省级过滤，市级会被忽略）
+                # 构造 location 参数（city 必须是数组，如 ["杭州"]）
                 loc_entry = {"province": province} if province else {}
                 if city:
-                    loc_entry["citys"] = [{"name": city}]
+                    loc_entry["city"] = [city]
                 body["query"]["location"] = [loc_entry] if loc_entry else []
                 body["pageSize"] = page_size
                 body["sortField"] = sort_field
@@ -326,12 +326,6 @@ class DianLeidaClient:
 
         self._page.unroute("**/dld/api/shopSearch/queryList")
         print(f"  [完成] 共 {len(all_items)} 条 (总计 {total_count})", flush=True)
-
-        # 市级后过滤（API 不支持市级参数）
-        if city and all_items:
-            pre_count = len(all_items)
-            all_items = [s for s in all_items if s.get("city") == city]
-            print(f"  市级过滤 '{city}': {len(all_items)}/{pre_count} 条", flush=True)
 
         return {
             "code": 200,
