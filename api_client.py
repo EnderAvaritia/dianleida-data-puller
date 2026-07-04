@@ -396,8 +396,10 @@ class DianLeidaClient:
                     self._page.wait_for_timeout(200)
             except:
                 pass
-        # 再移除残留元素
+        # 再移除残留元素，恢复滚动
         self._page.evaluate("""() => {
+            document.body.style.overflow = 'auto';
+            document.documentElement.style.overflow = 'auto';
             const selectors = [
                 '.pop', '.el-dialog__wrapper', '.v-modal', '.el-overlay',
                 '.el-message-box__wrapper', '.el-dialog', '.el-message',
