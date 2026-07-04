@@ -284,16 +284,27 @@ class DianLeidaClient:
         # Helper: click next page silently, return response data or None
         def _click_next():
             before = len(api_responses)
-            try:
-                btn = self._page.locator("button.btn-next").first
-                if not btn.is_visible(timeout=2000) or btn.is_disabled():
-                    return None
-                # 翻页前清理弹窗
-                self._close_dialogs()
-                btn.click(force=True, timeout=5000)
-                return _wait_response(before)
-            except Exception:
-                return None
+            for attempt in range(3):
+                try:
+                    btn = self._page.locator("button.btn-next").first
+                    if not btn.is_visible(timeout=1000) or btn.is_disabled():
+                        if attempt < 2:
+                            self._page.wait_for_timeout(500)
+                            self._close_dialogs()
+                            continue
+                        return None
+                    self._close_dialogs()
+                    self._page.wait_for_timeout(200)
+                    btn.click(force=True, timeout=5000)
+                    data = _wait_response(before)
+                    if data is not None or attempt >= 2:
+                        return data
+                    self._page.wait_for_timeout(1000)
+                except Exception:
+                    if attempt >= 2:
+                        return None
+                    self._page.wait_for_timeout(1000)
+            return None
 
         # ── Skip pages until from_page ──
         # Page 1 is already loaded above. Skip to from_page if needed.
@@ -377,7 +388,7 @@ class DianLeidaClient:
     def _close_dialogs(self):
         """快速移除所有弹窗遮罩"""
         # 先点关闭按钮（触发 Vue 状态清理）
-        for sel in [".pop .close-btn", ".el-dialog__headerbtn", ".el-message-box__headerbtn"]:
+        for sel in [".pop .close-btn", ".pop .use-btn", ".el-dialog__headerbtn", ".el-message-box__headerbtn"]:
             try:
                 btn = self._page.locator(sel).first
                 if btn.is_visible(timeout=200):
