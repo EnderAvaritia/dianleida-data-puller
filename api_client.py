@@ -171,7 +171,7 @@ class DianLeidaClient:
         province: str = "",
         city: str = "",
         from_page: int = 1,
-        page_size: int = 200,
+        page_size: int = 100,
         sort_field: str = "bookedCount30d",
         max_pages: int = 0,
         on_page=None,
@@ -184,9 +184,9 @@ class DianLeidaClient:
 
         参数:
             province: 省份 (如 "浙江", "广东", "")
-            city: 城市 (如 "杭州", "广州", 留空=全省)
+            city: 城市 (如 "杭州", "常州", 留空=全省)
             from_page: 起始页码 (用于断点续传)
-            page_size: 每页条数 (最大 200)
+            page_size: 每页条数 (默认 100, API 上限 100)
             sort_field: 排序字段
             max_pages: 最大页数 (0=所有页)
             on_page: 每页回调 fn(page_no, items, total_accumulated, total_count) -> bool(是否继续)
@@ -358,7 +358,7 @@ class DianLeidaClient:
             if on_page and not on_page(current_page, items, len(all_items), total_count):
                 break
 
-            if len(items) < page_size:
+            if not items or len(all_items) >= total_count:
                 break
 
         self._page.unroute("**/dld/api/shopSearch/queryList")

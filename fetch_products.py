@@ -93,7 +93,7 @@ def search_products(keyword, max_pages=1, page_size=30, sort_field="bookedCount7
 
 # ── 商家搜索 ─────────────────────────────────────
 
-def search_shops(province="", city="", max_pages=0, page_size=200,
+def search_shops(province="", city="", max_pages=0, page_size=100,
                  from_page=1, resume=False, debug=False):
     """
     拉取商家/供应商列表，支持按地区筛选和多页拉取
@@ -237,7 +237,7 @@ if __name__ == "__main__":
         if args.city and not args.province:
             print("[FAIL] --city 必须配合 --province 使用，如: --province 江苏 --city 常州")
             sys.exit(1)
-        size = args.size if args.size != 30 else 200  # shop 模式默认 200
+        size = args.size if args.size != 30 else 100  # shop 模式默认 100 (API 上限)
         search_shops(
             province=args.province, city=args.city,
             max_pages=args.pages, page_size=size,
