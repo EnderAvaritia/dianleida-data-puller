@@ -356,6 +356,10 @@ class DianLeidaClient:
             new_data = _click_next()
             if new_data is None:
                 print(" 无响应", flush=True)
+                # 检测是否是免费版限制弹窗
+                upgrade = self._page.locator("text=升级套餐").first
+                if upgrade.is_visible(timeout=500):
+                    print("  [限制] 免费版最多查看 100 条，升级套餐可查看更多", flush=True)
                 break
 
             items = new_data.get("result", {}).get("list", [])
@@ -387,6 +391,17 @@ class DianLeidaClient:
 
     def _close_dialogs(self):
         """快速移除所有弹窗遮罩"""
+        # 检测免费版升级弹窗（包含"升级套餐"文本）
+        try:
+            upgrade_popup = self._page.locator("text=升级套餐").first
+            if upgrade_popup.is_visible(timeout=100):
+                # 先找关闭按钮
+                close_btn = self._page.locator(".pop .close-btn, .el-dialog__headerbtn, .el-icon-close").first
+                if close_btn.is_visible(timeout=200):
+                    close_btn.click(force=True, timeout=500)
+                    self._page.wait_for_timeout(300)
+        except:
+            pass
         # 先尝试点击标准 Element UI 弹窗关闭按钮（安全，无副作用）
         for sel in [".el-dialog__headerbtn", ".el-message-box__headerbtn"]:
             try:
