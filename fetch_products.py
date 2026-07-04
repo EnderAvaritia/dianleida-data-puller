@@ -88,7 +88,11 @@ def search_products(keyword, max_pages=1, page_size=30, sort_field="bookedCount7
             break
 
     if debug:
-        print("\n[调试] 浏览器保持打开，检查完毕后按 Enter 关闭...")
+        try:
+            print(f"\n[调试] 当前页面: {client._page.url}")
+        except:
+            pass
+        print("[调试] 浏览器保持打开，检查完毕后按 Enter 关闭...")
         input()
 
     client.stop()
@@ -156,7 +160,11 @@ def search_shops(province="", city="", max_pages=0, page_size=100,
         print(f"  [FAIL] {e}")
 
     if debug:
-        print("\n[调试] 浏览器保持打开，检查完毕后按 Enter 关闭...")
+        try:
+            print(f"\n[调试] 当前页面 URL: {client._page.url}")
+        except:
+            pass
+        print("[调试] 浏览器保持打开，检查完毕后按 Enter 关闭...")
         input()
 
     client.stop()
