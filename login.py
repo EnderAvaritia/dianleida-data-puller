@@ -69,22 +69,14 @@ def do_login(page, context):
     import msvcrt
 
     print("\n[!] 需要登录店雷达")
-    print("[!] 浏览器已打开")
-    print("[!] 按 Enter 开始登录（自动点击登录按钮）")
-    print("[!] 登录完成后，再次回到此窗口按 Enter 保存 cookie\n")
-
-    # 等待用户按 Enter 开始登录
-    print("[*] 按 Enter 开始登录流程...", end="", flush=True)
-    while True:
-        if msvcrt.kbhit() and msvcrt.getch() in (b'\r', b'\n'):
-            break
-    print("")
+    print("[!] 浏览器已打开，请手动扫码或账号密码登录")
+    print("[!] 登录完成后，回到此窗口按 Enter 保存 cookie\n")
 
     # 点击登录/注册按钮
     try:
         login_btn = page.get_by_text(re.compile(r"登录", re.IGNORECASE))
         login_btn.first.click(timeout=10000)
-        print("[*] 已点击登录按钮，请在浏览器中扫码或输入账号密码")
+        print("[*] 已点击登录按钮，等待登录完成...")
     except Exception as e:
         print(f"[*] 自动点击登录按钮失败 ({e})，请手动在浏览器中登录")
 
