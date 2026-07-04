@@ -200,9 +200,10 @@ class DianLeidaClient:
             req = route.request
             if "/dld/api/shopSearch/queryList" in req.url:
                 body = json.loads(req.post_data or "{}")
+                # 构造 location 参数（API 只支持省级过滤，市级会被忽略）
                 loc_entry = {"province": province} if province else {}
                 if city:
-                    loc_entry["city"] = city
+                    loc_entry["citys"] = [{"name": city}]
                 body["query"]["location"] = [loc_entry] if loc_entry else []
                 body["pageSize"] = page_size
                 body["sortField"] = sort_field
@@ -250,6 +251,8 @@ class DianLeidaClient:
                 btn = self._page.locator("button.btn-next").first
                 if not btn.is_visible(timeout=2000) or btn.is_disabled():
                     return None
+                # 翻页前清理弹窗
+                self._close_dialogs()
                 btn.click(force=True, timeout=5000)
                 return _wait_response(before)
             except Exception:
@@ -324,6 +327,12 @@ class DianLeidaClient:
         self._page.unroute("**/dld/api/shopSearch/queryList")
         print(f"  [完成] 共 {len(all_items)} 条 (总计 {total_count})", flush=True)
 
+        # 市级后过滤（API 不支持市级参数）
+        if city and all_items:
+            pre_count = len(all_items)
+            all_items = [s for s in all_items if s.get("city") == city]
+            print(f"  市级过滤 '{city}': {len(all_items)}/{pre_count} 条", flush=True)
+
         return {
             "code": 200,
             "result": {
@@ -340,14 +349,28 @@ class DianLeidaClient:
         for text in ["暂不登录", "知道了", "取消", "确定"]:
             try:
                 btn = self._page.locator(f"button:has-text('{text}')").first
-                if btn.is_visible(timeout=1000):
+                if btn.is_visible(timeout=500):
                     btn.click()
-                    self._page.wait_for_timeout(500)
+                    self._page.wait_for_timeout(300)
             except:
                 pass
-        # 方法2: JS 移除遮罩元素
+        # 方法2: 移除所有弹窗/蒙层元素
         self._page.evaluate("""() => {
-            document.querySelectorAll('.el-dialog__wrapper, .v-modal, .pop').forEach(el => el.remove());
+            const selectors = [
+                '.el-dialog__wrapper', '.v-modal', '.el-overlay',
+                '.el-message-box__wrapper', '.el-dialog', '.el-message',
+                '.el-notification', '.pop', '.mask', '[class*="mask"]',
+            ];
+            selectors.forEach(s => {
+                document.querySelectorAll(s).forEach(el => el.remove());
+            });
+            // 移除所有具有 fixed/absolute 定位的蒙层
+            document.querySelectorAll('div').forEach(el => {
+                const z = parseInt(el.style.zIndex);
+                if (z > 1000 || el.classList.contains('v-modal') || el.classList.contains('el-overlay')) {
+                    el.remove();
+                }
+            });
         }""")
 
     def is_logged_in(self) -> bool:
