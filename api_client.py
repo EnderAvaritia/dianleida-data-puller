@@ -387,8 +387,8 @@ class DianLeidaClient:
 
     def _close_dialogs(self):
         """快速移除所有弹窗遮罩"""
-        # 先点关闭按钮（触发 Vue 状态清理）
-        for sel in [".pop .close-btn", ".pop .use-btn", ".el-dialog__headerbtn", ".el-message-box__headerbtn"]:
+        # 先尝试点击标准 Element UI 弹窗关闭按钮（安全，无副作用）
+        for sel in [".el-dialog__headerbtn", ".el-message-box__headerbtn"]:
             try:
                 btn = self._page.locator(sel).first
                 if btn.is_visible(timeout=200):
@@ -396,11 +396,11 @@ class DianLeidaClient:
                     self._page.wait_for_timeout(200)
             except:
                 pass
-        # 再移除残留元素，恢复滚动
+        # 移除残留元素，恢复滚动（直接用 JS 移除，不点击弹窗内部按钮以免触发意外操作）
         self._page.evaluate("""() => {
             document.body.style.overflow = 'auto';
             document.documentElement.style.overflow = 'auto';
-            // 只移除带 Vue scoped data-v-* 属性的 .pop 弹窗（精确匹配，不误伤页面内容）
+            // 移除带 Vue scoped data-v-* 属性的 .pop 弹窗
             document.querySelectorAll('div[class="pop"]').forEach(el => {
                 for (let attr of el.getAttributeNames()) {
                     if (attr.startsWith('data-v-')) { el.remove(); break; }
