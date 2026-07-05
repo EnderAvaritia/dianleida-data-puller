@@ -1,8 +1,27 @@
-# 店雷达数据拉取
+# 店雷达数据采集 & 商家地图标记
 
-自动从 [店雷达 (dianleida.net)](https://www.dianleida.net/) 拉取商品/商家数据的工具。
+一站式工具：从 [店雷达 (dianleida.net)](https://www.dianleida.net/) 拉取商品/商家数据，然后生成交互式地图标记店铺位置。
 
-通过 Playwright 无头浏览器 + 持久化 Cookie 登录 Web 端，利用内部 API 批量拉取。
+## 项目结构
+
+```
+├── login.py              # 登录（扫码 → 保存 Cookie）
+├── api_client.py          # API 客户端
+├── fetch_products.py      # 数据拉取工具（商品/商家）
+├── fetch_all_shops.py     # 按类目批量采集商家（突破免费版限制）
+├── cookies_verify.py      # Cookie 有效性检测
+├── generate_map.py        # 地图标记生成器（将 CSV 地址 → 交互式地图）
+├── config.example.json    # 地图工具配置示例（复制为 config.json 使用）
+├── cookies.json           # 持久化 Cookie (已 gitignore)
+├── config.json            # 地图工具配置文件（含 API Key, 已 gitignore）
+├── output/                # 导出数据 & 地图输出目录
+│   ├── shops_江苏常州.json / .csv    # 店雷达采集结果
+│   ├── changzhou_shops_map.html      # 生成的交互式地图
+│   ├── geocode_cache.json            # 地理编码缓存
+│   ├── categories.json               # 类目列表缓存
+│   └── ...
+└── README.md
+```
 
 ## 快速开始
 
@@ -198,24 +217,89 @@ venv\Scripts\python.exe fetch_all_shops.py --province 江苏 --city 常州 --max
 `fetch_all_shops.py` 自动获取 52 个一级类目的 ID，然后对每个类目发起带 `location` + `categoryIdList` 的搜索请求，
 最后按 `shopId` 去重合并。
 
-## 项目结构
+---
 
+## 商家地图标记
+
+将采集到的商家 CSV（含地址、经纬度）生成交互式 Leaflet 地图，标记店铺位置，区分工厂/非工厂。
+
+### 快速开始
+
+```bash
+# 安装依赖
+pip install -r requirements.txt
+
+# 生成地图（需先配置 API Key）
+python generate_map.py
 ```
-├── login.py              # 登录（扫码 → 保存 Cookie）
-├── api_client.py          # API 客户端
-├── fetch_products.py      # 数据拉取工具（商品/商家）
-├── fetch_all_shops.py     # 按类目批量采集商家（突破免费版限制）
-├── cookies_verify.py      # Cookie 有效性检测
-├── cookies.json           # 持久化 Cookie (已 gitignore)
-├── output/                # 导出数据目录
-│   ├── shops_江苏常州.json / .csv    # 常州全类目采集结果
-│   ├── categories.json               # 类目列表缓存
-│   └── ...
-└── README.md
+
+打开 `output/changzhou_shops_map.html` 即可查看地图。
+
+### 配置
+
+复制 `config.example.json` 为 `config.json`，填入 API Key：
+
+```bash
+cp config.example.json config.json
+# 然后编辑 config.json 填入 Key
 ```
+
+支持三种地理编码后端：
+
+| 服务 | 免费额度 | 推荐场景 | 配置字段 |
+|------|---------|---------|---------|
+| **天地图** | 10000 次/日 | 国内地址（推荐） | `tianditu_key` |
+| **高德地图** | 5000 次/日 | 国内地址（最准） | `amap_key` |
+| Nominatim | 无限制（需代理） | 海外地址 | 无需 Key |
+
+### 命令行参数
+
+```bash
+# 指定 CSV 文件
+python generate_map.py --csv output/my_data.csv
+
+# 指定输出目录和地理编码后端
+python generate_map.py --output-dir mymap --provider tianditu
+
+# 使用 Nominatim（免费无需 Key）
+python generate_map.py --provider nominatim
+
+# 指定底图风格
+python generate_map.py --tile-style gray
+```
+
+| 参数 | 说明 | 默认值 |
+|---|---|---|
+| `--csv` | CSV 文件路径 | `config.json` 中的配置 |
+| `--output-dir` | 输出目录 | `output` |
+| `--provider` | 编码后端: `amap` / `tianditu` / `nominatim` | `config.json` 中的配置 |
+| `--tile-style` | 底图: `clean`(高德路网-中文) / `gray`(浅灰英文) / `tianditu` / `osm` | `clean` |
+
+### 底图风格
+
+| 风格 | 效果 | 国内访问 |
+|------|------|---------|
+| `clean` ⭐ | 高德路网图（极简，中文标注） | ✅ |
+| `gray` | CartoDB Positron（浅灰底色，英文） | ⚠️ 可能需代理 |
+| `tianditu` | 天地图彩色矢量+地名标注 | ✅ 需 API Key |
+| `osm` | OpenStreetMap 标准地图 | ❌ 可能被屏蔽 |
+
+### 地理缓存
+
+地理编码结果自动缓存到 `output/geocode_cache.json`。第二次运行相同地址直接命中缓存，不会重复请求 API。
+
+### CSV 数据格式
+
+| 列名 | 说明 | 示例 |
+|------|------|------|
+| `company` | 公司名称 | `常州XX纺织有限公司` |
+| `address` | 详细地址（用于地理编码） | `湖塘镇XX路XX号` |
+| `province` | 省份 | `江苏` |
+| `city` | 城市 | `常州` |
+| `isFactory` | 是否为工厂 | `True` / `False` |
+
+采集的商家 CSV 自带以上字段，可直接用于生成地图。
 
 ## Cookie 有效期
-
-- Cookie 约 30 天有效
 - 运行 `python cookies_verify.py` 检测
 - 过期后重新 `python login.py` 扫码即可

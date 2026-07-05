@@ -13,6 +13,7 @@ __pycache__/
 
 # Credentials & cookies
 cookies.json
+config.json
 *.env
 
 # OS

@@ -1,0 +1,30 @@
+{
+  "amap_key": "YOUR_AMAP_KEY_HERE",
+  "tianditu_key": "YOUR_TIANDITU_KEY_HERE",
+  "proxy": {
+    "http": "",
+    "https": ""
+  },
+  "geocoding": {
+    "provider": "nominatim",
+    "rate_limit": 1.0,
+    "timeout": 15
+  },
+  "map": {
+    "center": [31.8101, 119.9744],
+    "zoom": 11,
+    "max_cluster_radius": 50,
+    "tile_style": "clean"
+  },
+  "data": {
+    "csv_file": "shops_江苏常州.csv",
+    "encoding": "utf-8-sig",
+    "filter_empty_address": true
+  },
+  "marker": {
+    "factory_color": "#e74c3c",
+    "non_factory_color": "#3498db",
+    "size": 16,
+    "opacity": 0.9
+  }
+}
