@@ -157,15 +157,60 @@ venv\Scripts\python.exe fetch_products.py shop --province 浙江 --from-page 50 
 | `productionService` | 生产服务能力 |
 | `domainUri` | 店铺链接 |
 
+## 批量采集（按类目拆分）
+
+免费版限制每次查询约 100 条。但 API 支持按**类目（行业）**过滤，不同类目返回不同的商家。
+
+通过遍历 52 个一级类目分别搜索，合并去重后能获取数倍于单次查询的数据：
+
+```bash
+# 采集常州所有商家（遍历全部 52 个类目，耗时约 10-20 分钟）
+venv\Scripts\python.exe fetch_all_shops.py --province 江苏 --city 常州
+
+# 采集杭州商家
+venv\Scripts\python.exe fetch_all_shops.py --province 浙江 --city 杭州
+
+# 从第 10 个类目开始（续传）
+venv\Scripts\python.exe fetch_all_shops.py --province 江苏 --city 常州 --from 10
+
+# 只跑前 5 个类目测试
+venv\Scripts\python.exe fetch_all_shops.py --province 江苏 --city 常州 --max-cats 5
+```
+
+选项:
+| 参数 | 说明 |
+|------|------|
+| `--province` | 省份 |
+| `--city` | 城市 |
+| `--from N` | 从第 N 个类目开始（断点续传） |
+| `--max-cats N` | 最多处理 N 个类目 |
+
+实际效果（常州为例）:
+| 方式 | 结果 |
+|------|------|
+| 单次搜索（默认） | ~100 家 |
+| 3 种排序合并 | ~185 家 |
+| **52 个类目遍历** | **~2,300 家**（含约 1,300 工厂） |
+
+### 原理
+
+商家搜索 API 的请求 body 中有 `query.categoryIdList` 字段（类目 ID 数组）。
+`fetch_all_shops.py` 自动获取 52 个一级类目的 ID，然后对每个类目发起带 `location` + `categoryIdList` 的搜索请求，
+最后按 `shopId` 去重合并。
+
 ## 项目结构
 
 ```
 ├── login.py              # 登录（扫码 → 保存 Cookie）
 ├── api_client.py          # API 客户端
 ├── fetch_products.py      # 数据拉取工具（商品/商家）
+├── fetch_all_shops.py     # 按类目批量采集商家（突破免费版限制）
 ├── cookies_verify.py      # Cookie 有效性检测
 ├── cookies.json           # 持久化 Cookie (已 gitignore)
 ├── output/                # 导出数据目录
+│   ├── shops_江苏常州.json / .csv    # 常州全类目采集结果
+│   ├── categories.json               # 类目列表缓存
+│   └── ...
 └── README.md
 ```
 
