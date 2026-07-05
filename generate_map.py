@@ -187,7 +187,7 @@ def geocode_address(
         return None
 
 
-def geocode_all(entries: list[dict], cache: dict) -> list[dict]:
+def geocode_all(entries: list[dict], cache: dict, cache_path: str = "") -> list[dict]:
     """批量地理编码"""
     total = len(entries)
     print(f"\n{'='*60}")
@@ -217,6 +217,9 @@ def geocode_all(entries: list[dict], cache: dict) -> list[dict]:
             lat, lon = coord
             results.append({**entry, "lat": lat, "lon": lon})
             print(f"  {num} {company[:24]:24s} -> OK")
+            # 拉一条，写一条 —— 崩了也不丢进度
+            if cache_path:
+                save_cache(cache, cache_path)
         else:
             print(f"  {num} {company[:24]:24s} -> 跳过: 地址解析失败")
 
@@ -605,12 +608,11 @@ def main():
         entries = [e for e in entries if e.get("address", "").strip()]
         print(f"\n-> 过滤空地址: {before} -> {len(entries)} 条")
 
-    # 3. 地理编码（带缓存）
+    # 3. 地理编码（每条结果即时存缓存，崩了不丢进度）
     cache = load_cache(cache_path)
     cached_count = sum(1 for v in cache.values() if v is not None)
     print(f"   缓存命中: {cached_count} 条")
-    geocoded = geocode_all(entries, cache)
-    save_cache(cache, cache_path)
+    geocoded = geocode_all(entries, cache, cache_path=cache_path)
 
     if not geocoded:
         print("[ERR] 没有成功编码的地址，无法生成地图")
