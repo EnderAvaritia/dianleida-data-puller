@@ -206,6 +206,7 @@ class DianLeidaClient:
                     loc_entry["city"] = [city]
                 body["query"]["location"] = [loc_entry] if loc_entry else []
                 body["sortField"] = sort_field
+                body["pageSize"] = page_size
                 route.continue_(post_data=json.dumps(body, ensure_ascii=False))
             else:
                 route.continue_()

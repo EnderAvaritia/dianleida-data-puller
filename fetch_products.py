@@ -102,7 +102,7 @@ def search_products(keyword, max_pages=1, page_size=30, sort_field="bookedCount7
 # ── 商家搜索 ─────────────────────────────────────
 
 def search_shops(province="", city="", max_pages=0, page_size=100,
-                 from_page=1, resume=False, debug=False):
+                 from_page=1, resume=False, debug=False, sort_field="bookedCount30d"):
     """
     拉取商家/供应商列表，支持按地区筛选和多页拉取
 
@@ -152,6 +152,7 @@ def search_shops(province="", city="", max_pages=0, page_size=100,
             province=province, city=city,
             from_page=from_page, page_size=page_size,
             max_pages=max_pages, on_page=on_page,
+            sort_field=sort_field,
         )
         new_items = result.get("result", {}).get("list", [])
         # 合并已有数据和新拉取的数据（无重叠，from_page=last_page+1）
@@ -253,13 +254,16 @@ if __name__ == "__main__":
         if args.city and not args.province:
             print("[FAIL] --city 必须配合 --province 使用，如: --province 江苏 --city 常州")
             sys.exit(1)
-        size = args.size if args.size != 30 else 100  # shop 模式默认 100 (API 上限)
+        size = args.size if args.size != 30 else 200  # shop 模式默认 200
+        # shop 默认排序是 bookedCount30d，不是 bookedCount7dGrowthRate
+        shop_sort = "bookedCount30d" if args.sort == parser.get_default("sort") else args.sort
         search_shops(
             province=args.province, city=args.city,
             max_pages=args.pages, page_size=size,
             from_page=args.from_page,
             resume=args.resume,
             debug=args.debug,
+            sort_field=shop_sort,
         )
     else:
         kw = args.keyword or input("输入搜索关键词: ")
