@@ -19,6 +19,9 @@ cookies.json
 Thumbs.db
 .DS_Store
 
+# OpenCode session data
+.omo/
+
 # Project temp
 temp/
 downloads/
