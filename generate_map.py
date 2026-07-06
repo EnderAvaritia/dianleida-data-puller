@@ -357,6 +357,15 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
 
     features_json = json.dumps(features, ensure_ascii=False)
 
+    # 字段配置，传给 JS 动态构建筛选 UI
+    field_cfg = [
+        {"key": k, "label": FILTER_FIELD_LABELS.get(k, k),
+         "unit": "(¥)" if k in ("salesVolume30d", "daySalesVolume") else "(单)" if "Count" in k else ""}
+        for k in FILTER_NUMERIC_FIELDS
+    ]
+    field_cfg_json = json.dumps(field_cfg, ensure_ascii=False)
+    field_labels_json = json.dumps(FILTER_FIELD_LABELS, ensure_ascii=False)
+
     html = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -748,6 +757,33 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
   }});
 
   var features = {features_json};
+  var FIELD_CFG = {field_cfg_json};
+  var FIELD_LABELS = {field_labels_json};
+
+  // ── 构建筛选面板的产量字段 UI ──────────────────────────────────────
+  var numericContainer = document.getElementById('numericFilters');
+  FIELD_CFG.forEach(function(f) {{
+    var div = document.createElement('div');
+    div.className = 'filter-field';
+
+    var enabled = true; // default enabled
+
+    div.innerHTML =
+      '<div class="filter-field-header">'
+        + '<input type="checkbox" class="ff-toggle" id="ff-' + f.key + '" checked>'
+        + '<span class="field-label">' + f.label + '</span>'
+        + '<span class="field-unit">' + (f.unit || '') + '</span>'
+      + '</div>'
+      + '<div class="filter-range">'
+        + '<input type="number" class="ff-min" id="ff-min-' + f.key + '" placeholder="最小值" step="any">'
+        + '<span class="range-sep">—</span>'
+        + '<input type="number" class="ff-max" id="ff-max-' + f.key + '" placeholder="最大值" step="any">'
+      + '</div>';
+    numericContainer.appendChild(div);
+  }});
+
+  // ── 构建标记 ───────────────────────────────────────────────────────
+  var markerDataList = []; // {{marker, data}}
 
   features.forEach(function(f) {{
     var pulse = f.isFactory ? ' marker-pulse' : '';
@@ -771,22 +807,144 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
 
     var tagClass = f.isFactory ? 'factory' : 'shop';
     var tagLabel = f.isFactory ? '工厂' : '非工厂';
-    var popupHtml = '<div class="popup-content">'
+    var popupLines = '<div class="popup-content">'
       + '<h3>' + f.name + '</h3>'
       + '<div class="popup-address">' + f.address + '</div>'
-      + '<span class="popup-tag ' + tagClass + '">' + tagLabel + '</span>'
-      + '</div>';
+      + '<span class="popup-tag ' + tagClass + '">' + tagLabel + '</span>';
+    // 在弹窗中显示产量数据
+    FIELD_CFG.forEach(function(cfg) {{
+      var v = f[cfg.key];
+      if (v !== null && v !== undefined) {{
+        var formatted = cfg.key === 'salesVolume30d' || cfg.key === 'daySalesVolume'
+          ? '¥' + Number(v).toLocaleString('zh-CN', {{maximumFractionDigits:2}})
+          : Number(v).toLocaleString('zh-CN');
+        popupLines += '<div style="font-size:11px;color:#888;margin-top:3px;">'
+          + cfg.label + ': <strong>' + formatted + '</strong></div>';
+      }}
+    }});
+    popupLines += '</div>';
 
-    marker.bindPopup(popupHtml, {{
+    marker.bindPopup(popupLines, {{
       closeButton: true,
-      maxWidth: 280,
+      maxWidth: 300,
     }});
 
-    markers.addLayer(marker);
+    markerDataList.push({{marker: marker, data: f}});
   }});
 
-  map.addLayer(markers);
+  // ── 筛选函数 ───────────────────────────────────────────────────────
+  function applyFilters() {{
+    var showFactory = document.getElementById('ff-factory').checked;
+    var showNonFactory = document.getElementById('ff-nonfactory').checked;
 
+    // 读取数值筛选条件
+    var fieldFilters = [];
+    FIELD_CFG.forEach(function(f) {{
+      var enabled = document.getElementById('ff-' + f.key).checked;
+      var minVal = parseFloat(document.getElementById('ff-min-' + f.key).value);
+      var maxVal = parseFloat(document.getElementById('ff-max-' + f.key).value);
+      fieldFilters.push({{
+        key: f.key,
+        enabled: enabled,
+        min: isNaN(minVal) ? null : minVal,
+        max: isNaN(maxVal) ? null : maxVal,
+      }});
+    }});
+
+    markers.clearLayers();
+    var visibleCount = 0;
+
+    markerDataList.forEach(function(md) {{
+      var d = md.data;
+
+      // 1. 商家类型筛选
+      if (d.isFactory && !showFactory) return;
+      if (!d.isFactory && !showNonFactory) return;
+
+      // 2. 数值字段筛选
+      var pass = true;
+      for (var i = 0; i < fieldFilters.length; i++) {{
+        var ff = fieldFilters[i];
+        if (!ff.enabled) continue;
+
+        var val = d[ff.key];
+        if (val === null || val === undefined) {{ pass = false; break; }}
+        if (ff.min !== null && val < ff.min) {{ pass = false; break; }}
+        if (ff.max !== null && val > ff.max) {{ pass = false; break; }}
+      }}
+      if (!pass) return;
+
+      markers.addLayer(md.marker);
+      visibleCount++;
+    }});
+
+    // 更新计数
+    document.getElementById('filterCount').textContent =
+      '显示 ' + visibleCount + ' / ' + markerDataList.length + ' 家';
+
+    // 空状态提示
+    var emptyEl = document.getElementById('filterEmpty');
+    emptyEl.style.display = visibleCount === 0 ? 'block' : 'none';
+  }}
+
+  // ── 绑定事件 ───────────────────────────────────────────────────────
+  // 工厂/非工厂
+  document.getElementById('ff-factory').addEventListener('change', applyFilters);
+  document.getElementById('ff-nonfactory').addEventListener('change', applyFilters);
+
+  // 数值字段
+  FIELD_CFG.forEach(function(f) {{
+    document.getElementById('ff-' + f.key).addEventListener('change', applyFilters);
+    document.getElementById('ff-min-' + f.key).addEventListener('input', applyFilters);
+    document.getElementById('ff-max-' + f.key).addEventListener('input', applyFilters);
+  }});
+
+  // 面板开合
+  var panel = document.getElementById('filterPanel');
+  var toggleBtn = document.getElementById('filterToggle');
+  var closeBtn = document.getElementById('filterClose');
+
+  toggleBtn.addEventListener('click', function() {{
+    var open = panel.classList.toggle('open');
+    toggleBtn.classList.toggle('open');
+    toggleBtn.innerHTML = open ? '&#10005;' : '&#9776;';
+  }});
+  closeBtn.addEventListener('click', function() {{
+    panel.classList.remove('open');
+    toggleBtn.classList.remove('open');
+    toggleBtn.innerHTML = '&#9776;';
+  }});
+
+  // 重置
+  document.getElementById('filterReset').addEventListener('click', function() {{
+    document.getElementById('ff-factory').checked = true;
+    document.getElementById('ff-nonfactory').checked = true;
+    FIELD_CFG.forEach(function(f) {{
+      document.getElementById('ff-' + f.key).checked = true;
+      document.getElementById('ff-min-' + f.key).value = '';
+      document.getElementById('ff-max-' + f.key).value = '';
+    }});
+    applyFilters();
+  }});
+
+  // 清空全部
+  document.getElementById('filterClearAll').addEventListener('click', function() {{
+    document.getElementById('ff-factory').checked = false;
+    document.getElementById('ff-nonfactory').checked = false;
+    FIELD_CFG.forEach(function(f) {{
+      document.getElementById('ff-' + f.key).checked = false;
+    }});
+    applyFilters();
+  }});
+
+  // ── 初始渲染 ───────────────────────────────────────────────────────
+  if (markerDataList.length > 0) {{
+    markers.addLayer(markerDataList[0].marker); // 临时加一个避免空group报错
+  }}
+  map.addLayer(markers);
+  applyFilters();
+
+  // 调整视野
   if (features.length > 0) {{
     var group = L.featureGroup(
       features.map(function(f) {{
