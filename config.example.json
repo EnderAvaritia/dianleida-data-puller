@@ -1,6 +1,7 @@
 {
   "amap_key": "YOUR_AMAP_KEY_HERE",
   "tianditu_key": "YOUR_TIANDITU_KEY_HERE",
+  "max_workers": 1,
   "proxy": {
     "http": "",
     "https": ""
@@ -17,7 +18,7 @@
     "tile_style": "clean"
   },
   "data": {
-    "csv_file": "shops_江苏常州.csv",
+    "csv_file": "output/shops_江苏常州.csv",
     "encoding": "utf-8-sig",
     "filter_empty_address": true
   },

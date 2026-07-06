@@ -12,6 +12,8 @@ import sys
 import time
 import hashlib
 import argparse
+import threading
+import concurrent.futures
 
 try:
     import requests
@@ -68,6 +70,55 @@ def build_proxies() -> dict | None:
 
 
 PROXIES = build_proxies()
+MAX_WORKERS = config.get("max_workers", 1)
+
+# ── 多线程安全 ─────────────────────────────────────────────────────────
+
+_cache_lock = threading.Lock()
+_last_req_time = 0.0
+_rate_limit_lock = threading.Lock()
+
+
+def _rate_limit(max_workers: int):
+    """跨线程共享速率限制，保证整体 QPS 不超过 1/RATE_LIMIT"""
+    global _last_req_time
+    if max_workers <= 1:
+        time.sleep(RATE_LIMIT)
+        return
+    with _rate_limit_lock:
+        now = time.time()
+        elapsed = now - _last_req_time
+        if elapsed < RATE_LIMIT:
+            time.sleep(RATE_LIMIT - elapsed)
+        _last_req_time = time.time()
+
+# ── 产量筛选字段配置 ─────────────────────────────────────────────────
+
+FILTER_NUMERIC_FIELDS = [
+    "bookedCount30d", "saleQuantity30d", "salesVolume30d",
+    "dayBookedCount", "daySalesVolume", "offerCount", "beFavedCount",
+]
+
+FILTER_FIELD_LABELS = {
+    "bookedCount30d": "近30日订单数",
+    "saleQuantity30d": "近30日销量",
+    "salesVolume30d": "近30日销售额(¥)",
+    "dayBookedCount": "日订单数",
+    "daySalesVolume": "日销售额(¥)",
+    "offerCount": "在售商品数",
+    "beFavedCount": "收藏数",
+}
+
+
+def parse_float(val) -> float | None:
+    """安全解析数值，空值/非数字返回 None"""
+    if val is None:
+        return None
+    try:
+        return float(str(val).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return None
+
 
 # ── 工具函数 ──────────────────────────────────────────────────────────
 
@@ -159,14 +210,17 @@ def geocode_tianditu(address: str, cache: dict, key: str) -> tuple[float, float]
 def geocode_address(
     address: str, province: str, city: str, cache: dict
 ) -> tuple[float, float] | None:
-    """地理编码单个地址（自动选择后端）"""
+    """地理编码单个地址（自动选择后端，线程安全）"""
     key = cache_key(address, province, city, PROVIDER)
 
-    if key in cache:
-        cached = cache[key]
-        if cached is not None:
-            return tuple(cached)
-        return None
+    with _cache_lock:
+        if key in cache:
+            cached = cache[key]
+            if cached is not None:
+                return tuple(cached)
+            return None
+
+    _rate_limit(MAX_WORKERS)
 
     if PROVIDER == "amap":
         coord = geocode_amap(address, city, cache, AMAP_KEY)
@@ -180,53 +234,85 @@ def geocode_address(
         return None
 
     if coord:
-        cache[key] = [coord[0], coord[1]]
+        with _cache_lock:
+            cache[key] = [coord[0], coord[1]]
         return coord
     else:
-        cache[key] = None
+        with _cache_lock:
+            cache[key] = None
         return None
 
 
-def geocode_all(entries: list[dict], cache: dict, cache_path: str = "") -> list[dict]:
-    """批量地理编码"""
+def geocode_all(entries: list[dict], cache: dict, cache_path: str = "", max_workers: int = 1) -> list[dict]:
+    """批量地理编码，支持多线程"""
     total = len(entries)
     print(f"\n{'='*60}")
     print(f"  开始地理编码 (后端: {PROVIDER}) - 共 {total} 个地址")
+    if max_workers > 1:
+        print(f"  线程数: {max_workers}")
     print(f"{'='*60}\n")
 
-    results = []
+    results: list[dict | None] = [None] * total
+    results_lock = threading.Lock()
     pad = len(str(total))
 
-    for i, entry in enumerate(entries):
+    def process_one(entry: dict, idx: int) -> tuple[int, dict | None, str]:
+        """单条地址处理（工作线程内执行）"""
         addr = entry.get("address", "").strip()
         province = entry.get("province", "")
         city = entry.get("city", "")
         company = entry.get("company", "") or ""
 
         key = cache_key(addr, province, city, PROVIDER)
-        num = f"[{i+1:>{pad}}/{total}]"
 
-        if key in cache and cache[key] is not None:
-            lat, lon = cache[key]
-            results.append({**entry, "lat": lat, "lon": lon})
-            print(f"  {num} {company[:24]:24s} -> OK (cache)")
-            continue
+        with _cache_lock:
+            if key in cache and cache[key] is not None:
+                lat, lon = cache[key]
+                return idx, {**entry, "lat": lat, "lon": lon}, "OK (cache)"
 
         coord = geocode_address(addr, province, city, cache)
         if coord:
             lat, lon = coord
-            results.append({**entry, "lat": lat, "lon": lon})
-            print(f"  {num} {company[:24]:24s} -> OK")
-            # 拉一条，写一条 —— 崩了也不丢进度
-            if cache_path:
-                save_cache(cache, cache_path)
+            result = {**entry, "lat": lat, "lon": lon}
+            with _cache_lock:
+                cache[key] = [lat, lon]
+                if cache_path:
+                    save_cache(cache, cache_path)
+            return idx, result, "OK"
         else:
-            print(f"  {num} {company[:24]:24s} -> 跳过: 地址解析失败")
+            with _cache_lock:
+                cache[key] = None
+            return idx, None, "跳过: 地址解析失败"
 
-        time.sleep(RATE_LIMIT)
+    def print_progress(idx: int, company: str, status: str):
+        """打印进度（主线程安全）"""
+        num = f"[{idx+1:>{pad}}/{total}]"
+        print(f"  {num} {company[:24]:24s} -> {status}")
 
-    print(f"\n  完成！成功编码 {len(results)}/{total} 个地址\n")
-    return results
+    if max_workers <= 1:
+        # ── 单线程（原逻辑） ──
+        for i, entry in enumerate(entries):
+            _idx, result, status = process_one(entry, i)
+            company = entry.get("company", "") or ""
+            print_progress(i, company, status)
+            if result:
+                results[i] = result
+    else:
+        # ── 多线程 ──
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            fut_map = {executor.submit(process_one, entry, i): i for i, entry in enumerate(entries)}
+            for future in concurrent.futures.as_completed(fut_map):
+                idx, result, status = future.result()
+                company = entries[idx].get("company", "") or ""
+                print_progress(idx, company, status)
+                if result:
+                    with results_lock:
+                        results[idx] = result
+
+    # 按原序收集
+    ordered = [r for r in results if r is not None]
+    print(f"\n  完成！成功编码 {len(ordered)}/{total} 个地址\n")
+    return ordered
 
 
 # ── 地图 HTML 生成 ────────────────────────────────────────────────────
@@ -254,7 +340,7 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
         else:
             non_factory_count += 1
 
-        features.append({
+        feature = {
             "lat": e["lat"],
             "lon": e["lon"],
             "name": e.get("company", ""),
@@ -263,7 +349,11 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
             "color": color,
             "size": marker_size,
             "opacity": opacity,
-        })
+        }
+        # 附带产量筛选字段
+        for field in FILTER_NUMERIC_FIELDS:
+            feature[field] = parse_float(e.get(field, ""))
+        features.append(feature)
 
     features_json = json.dumps(features, ensure_ascii=False)
 
@@ -390,6 +480,143 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
     pointer-events: none;
   }}
   .stats-bar strong {{ color: #2c3e50; }}
+
+  /* ── 筛选面板 ────────────────────────────────────────────── */
+  #filterToggle {{
+    position: absolute; top: 70px; right: 0; z-index: 1000;
+    width: 36px; height: 36px; border: none; border-radius: 0 6px 6px 0;
+    background: rgba(255,255,255,0.95); color: #555;
+    font-size: 18px; cursor: pointer;
+    box-shadow: 2px 2px 8px rgba(0,0,0,0.12);
+    transition: right 0.3s ease;
+    display: flex; align-items: center; justify-content: center;
+  }}
+  #filterToggle:hover {{ background: #f0f0f0; }}
+  #filterToggle.open {{ right: 310px; }}
+
+  #filterPanel {{
+    position: absolute; top: 0; right: -310px; z-index: 1001;
+    width: 300px; height: 100%;
+    background: rgba(255,255,255,0.97);
+    box-shadow: -2px 0 16px rgba(0,0,0,0.12);
+    transition: right 0.3s ease;
+    display: flex; flex-direction: column;
+    font-size: 13px; color: #333;
+    backdrop-filter: blur(6px);
+  }}
+  #filterPanel.open {{ right: 0; }}
+
+  .filter-header {{
+    padding: 14px 16px 10px;
+    border-bottom: 1px solid #eee;
+    display: flex; justify-content: space-between; align-items: center;
+    flex-shrink: 0;
+  }}
+  .filter-header h3 {{
+    margin: 0; font-size: 15px; font-weight: 600; color: #2c3e50;
+  }}
+  .filter-header button {{
+    border: none; background: none; font-size: 18px; cursor: pointer;
+    color: #999; padding: 0 4px;
+  }}
+  .filter-header button:hover {{ color: #333; }}
+
+  .filter-body {{
+    flex: 1; overflow-y: auto; padding: 10px 0;
+  }}
+
+  .filter-section {{
+    padding: 0 16px 10px; margin-bottom: 6px;
+  }}
+  .filter-section-title {{
+    font-size: 12px; font-weight: 600; color: #888;
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin-bottom: 8px; padding-bottom: 4px;
+    border-bottom: 1px solid #eee;
+  }}
+
+  /* 工厂复选框行 */
+  .factory-check-row {{
+    display: flex; gap: 16px; margin: 4px 0;
+  }}
+  .factory-check-row label {{
+    display: flex; align-items: center; gap: 5px;
+    cursor: pointer; font-size: 13px;
+    padding: 3px 0;
+  }}
+  .factory-check-row input[type="checkbox"] {{
+    accent-color: #3498db; width: 15px; height: 15px; cursor: pointer;
+  }}
+
+  /* 产量字段行 */
+  .filter-field {{
+    margin: 3px 0; padding: 6px 8px; border-radius: 6px;
+    transition: background 0.15s;
+  }}
+  .filter-field:hover {{ background: #f5f6fa; }}
+  .filter-field-header {{
+    display: flex; align-items: center; gap: 6px;
+  }}
+  .filter-field-header input[type="checkbox"] {{
+    accent-color: #3498db; width: 14px; height: 14px; cursor: pointer; flex-shrink: 0;
+  }}
+  .filter-field-header .field-label {{
+    font-size: 12px; color: #555; cursor: pointer; flex: 1;
+  }}
+  .filter-field-header .field-unit {{
+    font-size: 11px; color: #aaa;
+  }}
+
+  .filter-range {{
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 5px; margin-left: 20px;
+  }}
+  .filter-range input[type="number"] {{
+    width: 70px; padding: 3px 6px; border: 1px solid #ddd;
+    border-radius: 4px; font-size: 12px; text-align: center;
+    outline: none; transition: border-color 0.15s;
+  }}
+  .filter-range input[type="number"]:focus {{
+    border-color: #3498db; box-shadow: 0 0 0 2px rgba(52,152,219,0.12);
+  }}
+  .filter-range input[type="number"]:disabled {{
+    background: #f5f5f5; color: #ccc;
+  }}
+  .filter-range .range-sep {{
+    color: #bbb; font-size: 12px;
+  }}
+
+  /* 快捷按钮 */
+  .filter-actions {{
+    padding: 10px 16px 14px; border-top: 1px solid #eee;
+    display: flex; gap: 8px; flex-shrink: 0;
+  }}
+  .filter-actions button {{
+    flex: 1; padding: 6px 0; border: 1px solid #ddd; border-radius: 6px;
+    background: #fff; font-size: 12px; cursor: pointer; color: #555;
+    transition: all 0.15s;
+  }}
+  .filter-actions button:hover {{
+    background: #f0f0f0; border-color: #bbb;
+  }}
+  .filter-actions button.primary {{
+    background: #3498db; color: #fff; border-color: #3498db;
+  }}
+  .filter-actions button.primary:hover {{
+    background: #2980b9;
+  }}
+
+  .filter-count {{
+    padding: 0 16px 8px; font-size: 12px; color: #999;
+    flex-shrink: 0;
+  }}
+
+  /* 空状态提示 */
+  .filter-empty {{
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    text-align: center; color: #ccc; font-size: 14px;
+    pointer-events: none; display: none;
+  }}
 </style>
 </head>
 <body>
@@ -415,6 +642,41 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
     <span class="legend-count">{non_factory_count}</span>
   </div>
 </div>
+
+<!-- ── 筛选面板 ──────────────────────────────────────────── -->
+<button id="filterToggle" title="筛选">&#9776;</button>
+
+<div id="filterPanel">
+  <div class="filter-header">
+    <h3>筛选条件</h3>
+    <button id="filterClose">&times;</button>
+  </div>
+
+  <div class="filter-body">
+    <div class="filter-section">
+      <div class="filter-section-title">商家类型</div>
+      <div class="factory-check-row">
+        <label><input type="checkbox" id="ff-factory" checked>
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{MK['factory_color']};margin-right:2px;"></span> 工厂</label>
+        <label><input type="checkbox" id="ff-nonfactory" checked>
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:{MK['non_factory_color']};margin-right:2px;"></span> 非工厂</label>
+      </div>
+    </div>
+
+    <div class="filter-section">
+      <div class="filter-section-title">产量筛选 <span style="font-weight:400;color:#bbb;font-size:11px;">&#183; 勾选启用</span></div>
+      <div id="numericFilters"></div>
+    </div>
+  </div>
+
+  <div class="filter-count" id="filterCount"></div>
+  <div class="filter-actions">
+    <button id="filterReset">重置</button>
+    <button id="filterClearAll" class="primary">清空全部筛选</button>
+  </div>
+</div>
+
+<div class="filter-empty" id="filterEmpty">&#128200; 没有符合条件的结果<br><span style="font-size:12px;">请调整筛选条件</span></div>
 
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
@@ -550,6 +812,7 @@ def main():
     parser.add_argument("--output-dir", default=OUTPUT_DIR, help="输出目录（默认: output）")
     parser.add_argument("--provider", help="地理编码后端: amap / tianditu / nominatim")
     parser.add_argument("--tile-style", help="地图底图风格: clean(高德路网-极简+中文) / gray(CartoDB浅灰) / tianditu(天地图) / osm(OpenStreetMap)")
+    parser.add_argument("--workers", type=int, default=MAX_WORKERS, help="地理编码线程数（默认: 1，多线程可显著提速）")
     args = parser.parse_args()
 
     output_dir = args.output_dir
@@ -612,7 +875,7 @@ def main():
     cache = load_cache(cache_path)
     cached_count = sum(1 for v in cache.values() if v is not None)
     print(f"   缓存命中: {cached_count} 条")
-    geocoded = geocode_all(entries, cache, cache_path=cache_path)
+    geocoded = geocode_all(entries, cache, cache_path=cache_path, max_workers=args.workers)
 
     if not geocoded:
         print("[ERR] 没有成功编码的地址，无法生成地图")
