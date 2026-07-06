@@ -22,6 +22,9 @@ except ImportError:
 
 # ── 配置加载 ──────────────────────────────────────────────────────────
 
+# 立即模式：日志实时输出
+sys.stdout.reconfigure(line_buffering=True)
+
 CONFIG_FILE = "config.json"
 OUTPUT_DIR = "output"
 
@@ -288,6 +291,9 @@ def geocode_all(entries: list[dict], cache: dict, cache_path: str = "", max_work
     print(f"\n  -> 缓存命中 {total - len(uncached_indices)}/{total}，需请求 API: {len(uncached_indices)} 条\n")
 
     # ── 阶段 2：多线程请求 API ──
+    save_counter = 0
+    SAVE_INTERVAL = 20  # 每成功 N 条写一次缓存，减少 I/O
+
     def fetch_one(idx: int) -> tuple[int, dict | None, str]:
         entry = entries[idx]
         addr = entry.get("address", "").strip()
@@ -301,11 +307,16 @@ def geocode_all(entries: list[dict], cache: dict, cache_path: str = "", max_work
             with _cache_lock:
                 key = cache_key(addr, province, city, PROVIDER)
                 cache[key] = [coord[0], coord[1]]
-                if cache_path:
-                    save_cache(cache, cache_path)
             return idx, result, "OK"
         else:
             return idx, None, "跳过: 地址解析失败"
+
+    def flush_cache():
+        """带锁写缓存"""
+        if not cache_path:
+            return
+        with _cache_lock:
+            save_cache(cache, cache_path)
 
     if max_workers <= 1:
         for idx in uncached_indices:
@@ -314,15 +325,35 @@ def geocode_all(entries: list[dict], cache: dict, cache_path: str = "", max_work
             num = f"[{idx+1:>{pad}}/{total}]"
             print(f"  {num} {company[:24]:24s} -> {status}")
             results[idx] = result
+            if result:
+                save_counter += 1
+                if cache_path and save_counter % SAVE_INTERVAL == 0:
+                    save_cache(cache, cache_path)
     else:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            fut_map = {executor.submit(fetch_one, idx): idx for idx in uncached_indices}
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+        fut_map = {executor.submit(fetch_one, idx): idx for idx in uncached_indices}
+        try:
             for future in concurrent.futures.as_completed(fut_map):
                 idx, result, status = future.result()
                 company = entries[idx].get("company", "") or ""
                 num = f"[{idx+1:>{pad}}/{total}]"
                 print(f"  {num} {company[:24]:24s} -> {status}")
                 results[idx] = result
+                if result:
+                    save_counter += 1
+                    if cache_path and save_counter % SAVE_INTERVAL == 0:
+                        save_cache(cache, cache_path)
+        except KeyboardInterrupt:
+            print(f"\n  [WARN] Ctrl+C 收到，立即停止...")
+            executor.shutdown(wait=False, cancel_futures=True)
+            flush_cache()
+            ordered = [r for r in results if r is not None]
+            print(f"  [WARN] 已保存 {len(ordered)} 条缓存，下次继续\n")
+            return ordered
+        executor.shutdown(wait=True)
+
+    # 末尾写一次缓存（兜底最后一次间隔内的数据）
+    flush_cache()
 
     ordered = [r for r in results if r is not None]
     print(f"\n  完成！成功编码 {len(ordered)}/{total} 个地址\n")
