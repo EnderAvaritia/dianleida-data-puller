@@ -244,7 +244,12 @@ def geocode_address(
 
 
 def geocode_all(entries: list[dict], cache: dict, cache_path: str = "", max_workers: int = 1) -> list[dict]:
-    """批量地理编码，支持多线程"""
+    """批量地理编码，支持多线程。
+
+    两阶段策略：
+      1. 先扫描缓存，缓存命中的立即填入结果（零开销）
+      2. 只把未命中的丢进线程池并行请求 API
+    """
     total = len(entries)
     print(f"\n{'='*60}")
     print(f"  开始地理编码 (后端: {PROVIDER}) - 共 {total} 个地址")
@@ -253,63 +258,72 @@ def geocode_all(entries: list[dict], cache: dict, cache_path: str = "", max_work
     print(f"{'='*60}\n")
 
     results: list[dict | None] = [None] * total
-    results_lock = threading.Lock()
     pad = len(str(total))
 
-    def process_one(entry: dict, idx: int) -> tuple[int, dict | None, str]:
-        """单条地址处理（工作线程内执行）"""
+    # ── 阶段 1：扫描缓存 ──
+    uncached_indices: list[int] = []
+    for i, entry in enumerate(entries):
         addr = entry.get("address", "").strip()
         province = entry.get("province", "")
         city = entry.get("city", "")
         company = entry.get("company", "") or ""
-
         key = cache_key(addr, province, city, PROVIDER)
 
         with _cache_lock:
             if key in cache and cache[key] is not None:
                 lat, lon = cache[key]
-                return idx, {**entry, "lat": lat, "lon": lon}, "OK (cache)"
+                results[i] = {**entry, "lat": lat, "lon": lon}
+                num = f"[{i+1:>{pad}}/{total}]"
+                print(f"  {num} {company[:24]:24s} -> OK (cache)")
+                continue
+
+        # 不在缓存中，标记待请求
+        if addr:
+            uncached_indices.append(i)
+
+    if not uncached_indices:
+        print(f"\n  全部命中缓存！成功编码 {total}/{total} 个地址\n")
+        return [r for r in results if r is not None]
+
+    print(f"\n  -> 缓存命中 {total - len(uncached_indices)}/{total}，需请求 API: {len(uncached_indices)} 条\n")
+
+    # ── 阶段 2：多线程请求 API ──
+    def fetch_one(idx: int) -> tuple[int, dict | None, str]:
+        entry = entries[idx]
+        addr = entry.get("address", "").strip()
+        province = entry.get("province", "")
+        city = entry.get("city", "")
+        company = entry.get("company", "") or ""
 
         coord = geocode_address(addr, province, city, cache)
         if coord:
-            lat, lon = coord
-            result = {**entry, "lat": lat, "lon": lon}
+            result = {**entry, "lat": coord[0], "lon": coord[1]}
             with _cache_lock:
-                cache[key] = [lat, lon]
+                key = cache_key(addr, province, city, PROVIDER)
+                cache[key] = [coord[0], coord[1]]
                 if cache_path:
                     save_cache(cache, cache_path)
             return idx, result, "OK"
         else:
-            with _cache_lock:
-                cache[key] = None
             return idx, None, "跳过: 地址解析失败"
 
-    def print_progress(idx: int, company: str, status: str):
-        """打印进度（主线程安全）"""
-        num = f"[{idx+1:>{pad}}/{total}]"
-        print(f"  {num} {company[:24]:24s} -> {status}")
-
     if max_workers <= 1:
-        # ── 单线程（原逻辑） ──
-        for i, entry in enumerate(entries):
-            _idx, result, status = process_one(entry, i)
-            company = entry.get("company", "") or ""
-            print_progress(i, company, status)
-            if result:
-                results[i] = result
+        for idx in uncached_indices:
+            _idx, result, status = fetch_one(idx)
+            company = entries[idx].get("company", "") or ""
+            num = f"[{idx+1:>{pad}}/{total}]"
+            print(f"  {num} {company[:24]:24s} -> {status}")
+            results[idx] = result
     else:
-        # ── 多线程 ──
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            fut_map = {executor.submit(process_one, entry, i): i for i, entry in enumerate(entries)}
+            fut_map = {executor.submit(fetch_one, idx): idx for idx in uncached_indices}
             for future in concurrent.futures.as_completed(fut_map):
                 idx, result, status = future.result()
                 company = entries[idx].get("company", "") or ""
-                print_progress(idx, company, status)
-                if result:
-                    with results_lock:
-                        results[idx] = result
+                num = f"[{idx+1:>{pad}}/{total}]"
+                print(f"  {num} {company[:24]:24s} -> {status}")
+                results[idx] = result
 
-    # 按原序收集
     ordered = [r for r in results if r is not None]
     print(f"\n  完成！成功编码 {len(ordered)}/{total} 个地址\n")
     return ordered
@@ -614,6 +628,72 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
   .filter-actions button.primary:hover {{
     background: #2980b9;
   }}
+  .filter-actions button.success {{
+    background: #27ae60; color: #fff; border-color: #27ae60;
+  }}
+  .filter-actions button.success:hover {{
+    background: #219a52;
+  }}
+  .filter-actions button.warning {{
+    background: #e67e22; color: #fff; border-color: #e67e22;
+  }}
+  .filter-actions button.warning:hover {{
+    background: #d35400;
+  }}
+
+  /* 定位按钮进度状态 */
+  .filter-actions button.locating {{
+    background: #f39c12; color: #fff; border-color: #f39c12;
+    animation: locate-pulse 1.5s ease-in-out infinite;
+    pointer-events: none;
+  }}
+  @keyframes locate-pulse {{
+    0%, 100% {{ opacity: 1; }}
+    50% {{ opacity: 0.6; }}
+  }}
+
+  /* 最近商家结果横幅 */
+  #locateResult {{
+    position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+    z-index: 999; display: none;
+    background: rgba(255,255,255,0.95);
+    padding: 10px 20px; border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.18);
+    font-size: 13px; color: #333;
+    backdrop-filter: blur(6px);
+    max-width: 80%;
+    text-align: center;
+    border: 1px solid rgba(39,174,96,0.25);
+    pointer-events: none;
+    white-space: nowrap;
+  }}
+  #locateResult .dist {{
+    font-weight: 700; color: #27ae60; font-size: 15px;
+  }}
+  #locateResult .shop-name {{
+    font-weight: 600; color: #2c3e50;
+  }}
+  #locateResult .locate-close {{
+    margin-left: 12px; cursor: pointer; color: #bbb; font-size: 16px;
+    pointer-events: auto;
+  }}
+  #locateResult .locate-close:hover {{ color: #555; }}
+
+  #locateResult.show {{ display: inline-block; }}
+
+  /* 定位失败提示 */
+  #locateError {{
+    position: absolute; top: 60px; left: 50%; transform: translateX(-50%);
+    z-index: 999; display: none;
+    background: rgba(255,255,255,0.95);
+    padding: 8px 18px; border-radius: 10px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+    font-size: 12px; color: #e74c3c;
+    backdrop-filter: blur(4px);
+    white-space: nowrap;
+    border: 1px solid rgba(231,76,60,0.2);
+  }}
+  #locateError.show {{ display: block; }}
 
   .filter-count {{
     padding: 0 16px 8px; font-size: 12px; color: #999;
@@ -682,8 +762,12 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
   <div class="filter-actions">
     <button id="filterReset">重置</button>
     <button id="filterClearAll" class="primary">清空全部筛选</button>
+    <button id="locateBtn" class="success" title="使用浏览器定位，找到离你最近的商家">&#128205; 最近商家</button>
   </div>
 </div>
+
+<div id="locateResult"><span class="shop-name"></span> &middot; 距离 <span class="dist"></span> <span class="locate-close" id="locateResultClose">&times;</span></div>
+<div id="locateError"></div>
 
 <div class="filter-empty" id="filterEmpty">&#128200; 没有符合条件的结果<br><span style="font-size:12px;">请调整筛选条件</span></div>
 
@@ -937,7 +1021,148 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
     applyFilters();
   }});
 
-  // ── 初始渲染 ───────────────────────────────────────────────────────
+  // ── 定位最近商家 ───────────────────────────────────────────────────
+  var locateBtn = document.getElementById('locateBtn');
+  var locateResult = document.getElementById('locateResult');
+  var locateError = document.getElementById('locateError');
+  var locateCircle = null;
+  var locateMarker = null;
+
+  // 筛选变化时隐藏定位结果
+  var origApply = applyFilters;
+  applyFilters = function() {{
+    origApply();
+    hideLocateResult();
+  }};
+
+  function hideLocateResult() {{
+    locateResult.classList.remove('show');
+    locateError.classList.remove('show');
+    locateBtn.className = 'success';
+    locateBtn.textContent = '\u{1F4CD} 最近商家';
+    if (locateCircle) {{ map.removeLayer(locateCircle); locateCircle = null; }}
+    if (locateMarker) {{ map.removeLayer(locateMarker); locateMarker = null; }}
+  }}
+
+  function formatDistance(meters) {{
+    if (meters < 1000) return Math.round(meters) + ' m';
+    return (meters / 1000).toFixed(1) + ' km';
+  }}
+
+  document.getElementById('locateResultClose').addEventListener('click', hideLocateResult);
+
+  locateBtn.addEventListener('click', function() {{
+    // 先检查是否有可见标记
+    var visibleBounds = markers.getLayers().length;
+    if (visibleBounds === 0) {{
+      locateError.textContent = '当前没有可见的商家，请调整筛选条件后重试';
+      locateError.classList.add('show');
+      return;
+    }}
+
+    // 隐藏上次结果
+    hideLocateResult();
+
+    locateBtn.className = 'locating';
+    locateBtn.textContent = '\u{1F550} 定位中...';
+
+    map.locate({{
+      setView: false,
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 30000,
+    }});
+  }});
+
+  map.on('locationfound', function(e) {{
+    var userLatLng = e.latlng;
+    var nearest = null;
+    var nearestDist = Infinity;
+
+    // 只在可见标记中寻找
+    markers.eachLayer(function(marker) {{
+      var d = userLatLng.distanceTo(marker.getLatLng());
+      if (d < nearestDist) {{
+        nearestDist = d;
+        nearest = marker;
+      }}
+    }});
+
+    if (!nearest) {{
+      locateError.textContent = '未找到可见商家，请调整筛选条件';
+      locateError.classList.add('show');
+      locateBtn.className = 'success';
+      locateBtn.textContent = '\u{1F4CD} 最近商家';
+      return;
+    }}
+
+    // 在地图缩放不稳定时调整视野
+    var bounds = markers.getBounds();
+    if (bounds) {{
+      // 如果用户位置不在当前视野内，或者距离很远，移动视野
+      if (!bounds.contains(userLatLng) || nearestDist > 5000) {{
+        // 同时显示用户位置和最近商家
+        var group = L.featureGroup([nearest, L.marker(userLatLng)]);
+        map.fitBounds(group.getBounds().pad(0.3));
+      }} else {{
+        map.setView(nearest.getLatLng(), Math.max(map.getZoom(), 14));
+      }}
+    }}
+
+    // 打开最近商家的弹窗
+    nearest.openPopup();
+
+    // 显示用户位置圆圈
+    locateCircle = L.circle(userLatLng, {{
+      radius: nearestDist,
+      color: '#27ae60',
+      fillColor: '#27ae60',
+      fillOpacity: 0.08,
+      weight: 2,
+      opacity: 0.3,
+      dashArray: '6, 6',
+    }}).addTo(map);
+
+    // 用户位置标记
+    locateMarker = L.marker(userLatLng, {{
+      icon: L.divIcon({{
+        html: '<div style="width:18px;height:18px;background:#27ae60;border:3px solid #fff;border-radius:50%;box-shadow:0 0 0 4px rgba(39,174,96,0.3);"></div>',
+        className: '',
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+      }}),
+      zIndexOffset: 10000,
+    }}).addTo(map);
+
+    // 显示结果横幅
+    var nearestData = null;
+    for (var i = 0; i < markerDataList.length; i++) {{
+      if (markerDataList[i].marker === nearest) {{
+        nearestData = markerDataList[i].data;
+        break;
+      }}
+    }}
+    var nameText = nearestData ? nearestData.name : '未知商家';
+    locateResult.querySelector('.shop-name').textContent = nameText;
+    locateResult.querySelector('.dist').textContent = formatDistance(nearestDist);
+    locateResult.classList.add('show');
+
+    locateBtn.className = 'success';
+    locateBtn.textContent = '\u{1F4CD} 最近商家';
+  }});
+
+  map.on('locationerror', function(e) {{
+    var msg = '';
+    if (e.code === 1) msg = '定位被拒绝，请在浏览器设置中允许位置访问';
+    else if (e.code === 2) msg = '定位失败，无法获取位置信息';
+    else if (e.code === 3) msg = '定位超时，请检查网络或GPS';
+    else msg = '定位失败: ' + (e.message || '未知错误');
+
+    locateError.textContent = msg;
+    locateError.classList.add('show');
+    locateBtn.className = 'success';
+    locateBtn.textContent = '\u{1F4CD} 最近商家';
+  }});
   if (markerDataList.length > 0) {{
     markers.addLayer(markerDataList[0].marker); // 临时加一个避免空group报错
   }}

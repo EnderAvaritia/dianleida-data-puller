@@ -293,6 +293,15 @@ python generate_map.py --tile-style gray
 
 地理编码结果自动缓存到 `output/geocode_cache.json`。第二次运行相同地址直接命中缓存，不会重复请求 API。
 
+缓存命中采用两阶段策略：先**串行扫描缓存**（零开销），只将未命中的地址提交到**线程池**并行请求，缓存命中部分零线程开销。
+
+```bash
+# 5 线程并发请求 API（推荐）
+python generate_map.py --csv output/shops_常州_全类目.csv --workers 5
+
+# 或设到 config.json： "max_workers": 5
+```
+
 ### CSV 数据格式
 
 | 列名 | 说明 | 示例 |
