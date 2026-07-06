@@ -12,13 +12,17 @@
   # 采集杭州所有商家
   python fetch_all_shops.py --province 浙江 --city 杭州
 
-  # 跳过前10个类目（断点续传）
+  # 断点续传（自动从上次中断的类目继续）
+  python fetch_all_shops.py --province 江苏 --city 常州 --resume
+
+  # 手动指定起始类目
   python fetch_all_shops.py --province 江苏 --city 常州 --from 10
 """
 import csv
 import json
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -32,6 +36,44 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 FACTORY_URL = "https://www.dianleida.net/1688/competeShop/category/shopList/shopLibrary/"
 CAT_API_URL = "https://api.dianleida.net/dld/api/selectAnalyze/getCategoryList"
 SHOP_API_URL = "https://api.dianleida.net/dld/api/shopSearch/queryList"
+
+
+# ── 断点续传 ─────────────────────────────────────
+
+def _checkpoint_path(province="", city=""):
+    """checkpoint 文件路径，用于自动断点续传"""
+    name = f"shops_{province or '全国'}{city or ''}_all"
+    return OUTPUT_DIR / f".{name}.checkpoint"
+
+
+def _save_checkpoint(province, city, from_idx, total_items, total_cats):
+    """保存断点，记录已完成的类目索引"""
+    data = {
+        "province": province,
+        "city": city,
+        "from_idx": from_idx,
+        "total_items": total_items,
+        "total_cats": total_cats,
+        "timestamp": datetime.now().isoformat(),
+    }
+    path = _checkpoint_path(province, city)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _load_checkpoint(province="", city=""):
+    """读取断点，不存在返回 None"""
+    path = _checkpoint_path(province, city)
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return None
+
+
+def _clear_checkpoint(province="", city=""):
+    path = _checkpoint_path(province, city)
+    if path.exists():
+        path.unlink()
 
 
 def get_categories() -> list[dict]:
@@ -221,17 +263,28 @@ def main():
 示例:
   python fetch_all_shops.py --province 江苏 --city 常州
   python fetch_all_shops.py --province 浙江 --city 杭州 --from 10
+  python fetch_all_shops.py --province 广东 --city 深圳 --resume
   python fetch_all_shops.py --province 广东 --city 深圳 --max-cats 5
         """,
     )
     parser.add_argument("--province", default="", help="省份")
     parser.add_argument("--city", default="", help="城市")
-    parser.add_argument("--from", dest="from_idx", type=int, default=0, help="从第几个类目开始（断点续传）")
+    parser.add_argument("--from", dest="from_idx", type=int, default=0, help="从第几个类目开始（手动断点续传）")
+    parser.add_argument("--resume", action="store_true", help="自动断点续传，从上次中断的类目继续")
     parser.add_argument("--max-cats", type=int, default=0, help="最多处理多少个类目 (0=全部)")
 
     args = parser.parse_args()
 
-    # 1. 获取类目列表
+    # 1. 断点续传：优先 --resume 自动恢复，其次 --from 手动指定
+    if args.resume and args.from_idx == 0:
+        cp = _load_checkpoint(args.province, args.city)
+        if cp:
+            args.from_idx = cp["from_idx"]
+            print(f"[断点续传] 从第 {cp['from_idx']} 个类目继续 (已有 {cp['total_items']} 条数据)")
+        else:
+            print("[WARN] 未找到断点，从头开始")
+
+    # 2. 获取类目列表
     print("正在获取类目列表...")
     cats = get_categories()
     print(f"获取到 {len(cats)} 个一级类目")
@@ -283,13 +336,18 @@ def main():
         except Exception as e:
             print(f"[FAIL] {e}")
 
-        # 每 10 个类目保存一次中间结果
+        # 每个类目处理完都保存 checkpoint（用于自动断点续传）
+        _save_checkpoint(args.province, args.city, global_idx, len(all_items), total)
+
+        # 每 10 个类目保存一次完整结果（用于手动断点续传 --from）
         if (global_idx) % 10 == 0:
             save_results(all_items, f"{output_name}_checkpoint")
             print(f"  -> 已保存 checkpoint")
 
     # 3. 最终输出
     save_results(all_items, output_name)
+    _clear_checkpoint(args.province, args.city)
+    print("全部完成，已清除断点")
 
 
 if __name__ == "__main__":

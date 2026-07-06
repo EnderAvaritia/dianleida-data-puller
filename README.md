@@ -189,7 +189,10 @@ venv\Scripts\python.exe fetch_all_shops.py --province 江苏 --city 常州
 # 采集杭州商家
 venv\Scripts\python.exe fetch_all_shops.py --province 浙江 --city 杭州
 
-# 从第 10 个类目开始（续传）
+# 从上次中断处自动续传
+venv\Scripts\python.exe fetch_all_shops.py --province 江苏 --city 常州 --resume
+
+# 从第 10 个类目开始（手动续传）
 venv\Scripts\python.exe fetch_all_shops.py --province 江苏 --city 常州 --from 10
 
 # 只跑前 5 个类目测试
@@ -201,7 +204,8 @@ venv\Scripts\python.exe fetch_all_shops.py --province 江苏 --city 常州 --max
 |------|------|
 | `--province` | 省份 |
 | `--city` | 城市 |
-| `--from N` | 从第 N 个类目开始（断点续传） |
+| `--from N` | 从第 N 个类目开始（手动断点续传） |
+| `--resume` | 自动断点续传，从上次中断的类目继续 |
 | `--max-cats N` | 最多处理 N 个类目 |
 
 实际效果（常州为例）:
@@ -274,6 +278,7 @@ python generate_map.py --tile-style gray
 | `--output-dir` | 输出目录 | `output` |
 | `--provider` | 编码后端: `amap` / `tianditu` / `nominatim` | `config.json` 中的配置 |
 | `--tile-style` | 底图: `clean`(高德路网-中文) / `gray`(浅灰英文) / `tianditu` / `osm` | `clean` |
+| `--workers N` | 地理编码线程数（多线程显著提速） | `1`（单线程） |
 
 ### 底图风格
 
