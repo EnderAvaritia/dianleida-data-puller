@@ -1039,7 +1039,7 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
     locateResult.classList.remove('show');
     locateError.classList.remove('show');
     locateBtn.className = 'success';
-    locateBtn.textContent = '\u{1F4CD} 最近商家';
+    locateBtn.textContent = '\\u{{1F4CD}} \u6700\u8FD1\u5546\u5BB6';
     if (locateCircle) {{ map.removeLayer(locateCircle); locateCircle = null; }}
     if (locateMarker) {{ map.removeLayer(locateMarker); locateMarker = null; }}
   }}
@@ -1064,7 +1064,7 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
     hideLocateResult();
 
     locateBtn.className = 'locating';
-    locateBtn.textContent = '\u{1F550} 定位中...';
+    locateBtn.textContent = '\\u{{1F550}} \u5B9A\u4F4D\u4E2D...';
 
     map.locate({{
       setView: false,
@@ -1092,7 +1092,7 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
       locateError.textContent = '未找到可见商家，请调整筛选条件';
       locateError.classList.add('show');
       locateBtn.className = 'success';
-      locateBtn.textContent = '\u{1F4CD} 最近商家';
+      locateBtn.textContent = '\\u{{1F4CD}} \u6700\u8FD1\u5546\u5BB6';
       return;
     }}
 
@@ -1148,20 +1148,20 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
     locateResult.classList.add('show');
 
     locateBtn.className = 'success';
-    locateBtn.textContent = '\u{1F4CD} 最近商家';
+      locateBtn.textContent = '\\u{{1F4CD}} \u6700\u8FD1\u5546\u5BB6';
   }});
 
   map.on('locationerror', function(e) {{
     var msg = '';
-    if (e.code === 1) msg = '定位被拒绝，请在浏览器设置中允许位置访问';
-    else if (e.code === 2) msg = '定位失败，无法获取位置信息';
-    else if (e.code === 3) msg = '定位超时，请检查网络或GPS';
-    else msg = '定位失败: ' + (e.message || '未知错误');
+    if (e.code === 1) msg = '\u5B9A\u4F4D\u88AB\u62D2\u7EDD\uFF0C\u8BF7\u5728\u6D4F\u89C8\u5668\u8BBE\u7F6E\u4E2D\u5141\u8BB8\u4F4D\u7F6E\u8BBF\u95EE';
+    else if (e.code === 2) msg = '\u5B9A\u4F4D\u5931\u8D25\uFF0C\u65E0\u6CD5\u83B7\u53D6\u4F4D\u7F6E\u4FE1\u606F';
+    else if (e.code === 3) msg = '\u5B9A\u4F4D\u8D85\u65F6\uFF0C\u8BF7\u68C0\u67E5\u7F51\u7EDC\u6216GPS';
+    else msg = '\u5B9A\u4F4D\u5931\u8D25: ' + (e.message || '\u672A\u77E5\u9519\u8BEF');
 
     locateError.textContent = msg;
     locateError.classList.add('show');
     locateBtn.className = 'success';
-    locateBtn.textContent = '\u{1F4CD} 最近商家';
+      locateBtn.textContent = '\\u{{1F4CD}} \u6700\u8FD1\u5546\u5BB6';
   }});
   if (markerDataList.length > 0) {{
     markers.addLayer(markerDataList[0].marker); // 临时加一个避免空group报错
