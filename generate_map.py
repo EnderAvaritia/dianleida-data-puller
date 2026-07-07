@@ -981,6 +981,8 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
       for (var i = 0; i < fieldFilters.length; i++) {{
         var ff = fieldFilters[i];
         if (!ff.enabled) continue;
+        // 未设置任何范围时，跳过该字段的筛选（不限制）
+        if (ff.min === null && ff.max === null) continue;
 
         var val = d[ff.key];
         if (val === null || val === undefined) {{ pass = false; break; }}
@@ -1217,6 +1219,25 @@ def build_map_html(entries: list[dict], tianditu_key: str = "", tile_style: str 
     return html
 
 
+def generate_html(geocoded: list[dict], output_dir: str, map_path: str, cache_path: str) -> str:
+    """根据已编码的数据生成地图 HTML"""
+    print(f"\n{'='*60}")
+    print(f"  -> 生成地图 HTML")
+    print(f"{'='*60}\n")
+
+    ts = MC.get("tile_style", "clean")
+    html = build_map_html(geocoded, tianditu_key=TIANDITU_KEY, tile_style=ts)
+    os.makedirs(output_dir, exist_ok=True)
+    with open(map_path, "w", encoding="utf-8") as f:
+        f.write(html)
+
+    abs_path = os.path.abspath(map_path)
+    print(f"  [OK] 地图已生成: {abs_path}")
+    print(f"  [OK] 共标记 {len(geocoded)} 个地址")
+    print(f"\n  -> 用浏览器直接打开 {map_path} 即可查看地图\n")
+    return abs_path
+
+
 # ── 主流程 ────────────────────────────────────────────────────────────
 
 
@@ -1227,10 +1248,12 @@ def main():
     parser.add_argument("--provider", help="地理编码后端: amap / tianditu / nominatim")
     parser.add_argument("--tile-style", help="地图底图风格: clean(高德路网-极简+中文) / gray(CartoDB浅灰) / tianditu(天地图) / osm(OpenStreetMap)")
     parser.add_argument("--workers", type=int, default=MAX_WORKERS, help="地理编码线程数（默认: 1，多线程可显著提速）")
+    parser.add_argument("--skip-geocode", action="store_true", help="跳过地理编码，直接从上次保存的结果 JSON 生成地图（前提：已完整跑过一次）")
     args = parser.parse_args()
 
     output_dir = args.output_dir
     cache_path = os.path.join(output_dir, "geocode_cache.json")
+    geocoded_path = os.path.join(output_dir, "geocoded_results.json")
     map_path = os.path.join(output_dir, "changzhou_shops_map.html")
 
     # CLI 参数覆盖 config
@@ -1265,6 +1288,19 @@ def main():
         print()
         sys.exit(1)
 
+    # ── 跳过地理编码模式（直接读已保存的结果重建地图）──────────────
+    if args.skip_geocode:
+        if not os.path.exists(geocoded_path):
+            sys.exit(f"[ERR] 未找到结果缓存: {geocoded_path}\n  -> 请先完整跑一次（不带 --skip-geocode）生成该文件后再加速")
+        print(f"\n-> 跳过地理编码，直接读取: {geocoded_path}")
+        with open(geocoded_path, "r", encoding="utf-8") as f:
+            geocoded = json.load(f)
+        print(f"   已加载 {len(geocoded)} 条地理编码结果")
+        if not geocoded:
+            sys.exit("[ERR] 结果为空，无法生成地图")
+        # 跳到 HTML 生成
+        return generate_html(geocoded, output_dir, map_path, cache_path)
+
     # 1. 读 CSV
     csv_path = DC["csv_file"]
     if not os.path.exists(csv_path):
@@ -1295,22 +1331,12 @@ def main():
         print("[ERR] 没有成功编码的地址，无法生成地图")
         sys.exit(1)
 
-    # 4. 生成地图 HTML
-    print(f"\n{'='*60}")
-    print(f"  -> 生成地图 HTML")
-    print(f"{'='*60}\n")
+    # 保存地理编码结果到独立 JSON（供 --skip-geocode 使用）
+    with open(geocoded_path, "w", encoding="utf-8") as f:
+        json.dump(geocoded, f, ensure_ascii=False, indent=2)
+    print(f"\n  [OK] 地理编码结果已保存: {geocoded_path}")
 
-    ts = MC.get("tile_style", "clean")
-    html = build_map_html(geocoded, tianditu_key=TIANDITU_KEY, tile_style=ts)
-    os.makedirs(output_dir, exist_ok=True)
-    with open(map_path, "w", encoding="utf-8") as f:
-        f.write(html)
-
-    abs_path = os.path.abspath(map_path)
-    print(f"  [OK] 地图已生成: {abs_path}")
-    print(f"  [OK] 缓存已保存: {os.path.abspath(cache_path)}")
-    print(f"  [OK] 共标记 {len(geocoded)} 个地址")
-    print(f"\n  -> 用浏览器直接打开 {map_path} 即可查看地图\n")
+    return generate_html(geocoded, output_dir, map_path, cache_path)
 
 
 if __name__ == "__main__":

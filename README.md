@@ -17,7 +17,8 @@
 ├── output/                # 导出数据 & 地图输出目录
 │   ├── shops_江苏常州.json / .csv    # 店雷达采集结果
 │   ├── changzhou_shops_map.html      # 生成的交互式地图
-│   ├── geocode_cache.json            # 地理编码缓存
+│   ├── geocode_cache.json            # 地理编码缓存（地址→坐标）
+│   ├── geocoded_results.json         # 地理编码结果快照（供 --skip-geocode 加速）
 │   ├── categories.json               # 类目列表缓存
 │   └── ...
 └── README.md
@@ -279,6 +280,21 @@ python generate_map.py --tile-style gray
 | `--provider` | 编码后端: `amap` / `tianditu` / `nominatim` | `config.json` 中的配置 |
 | `--tile-style` | 底图: `clean`(高德路网-中文) / `gray`(浅灰英文) / `tianditu` / `osm` | `clean` |
 | `--workers N` | 地理编码线程数（多线程显著提速） | `1`（单线程） |
+| `--skip-geocode` | 跳过地理编码，直接从上次结果重建地图（需先完整跑过一次） | `false` |
+
+### 快速重建（`--skip-geocode`）
+
+完整跑过一次后，地理编码结果自动存入 `output/geocoded_results.json`。后续改底图风格、颜色或修复筛选逻辑后，只需：
+
+```bash
+# 秒级重建，跳过 CSV 解析 + 缓存扫描 + 地理编码
+python generate_map.py --skip-geocode
+
+# 配合 --tile-style 切换底图
+python generate_map.py --skip-geocode --tile-style gray
+```
+
+适用于：数据没变、只是调整地图外观或修复 bug 后需要快速重新生成 HTML 的场景。
 
 ### 底图风格
 
